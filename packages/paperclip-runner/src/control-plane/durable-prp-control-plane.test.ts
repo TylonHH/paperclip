@@ -435,14 +435,53 @@ it.each([true, false])("reconciles a saved semantic input only from an authorita
   }
 });
 
-it.each(["recovery", "live"] as const)("reconciles one semantic call when %s dispatch overlaps recovery", async competitor => {
-  const root = mkdtempSync(resolve(tmpdir(), "runner-semantic-recovery-race-"));
+it("resolves a saved semantic input only once across overlapping recovery calls", async () => {
+  const root = mkdtempSync(resolve(tmpdir(), "runner-saved-semantic-race-"));
+  const options = { stateDirectory: root, identity, expectedRunnerVersion, expectedRunnerDigest };
+  const original = new DurablePrpControlPlane({ ...options,
+    onSemanticToolInput: () => new Promise<{ result: unknown }>(() => undefined) });
+  let resolveOutcome!: (value: { result: unknown }) => void;
+  const outcome = new Promise<{ result: unknown }>(resolveResult => { resolveOutcome = resolveResult; });
+  const recover = vi.fn(async () => outcome);
+  let replacement: DurablePrpControlPlane | undefined;
+  const pending: Promise<void>[] = [];
+  try {
+    await original.start();
+    const client = (await authenticate(original, original.issueBootstrapTicket()))!;
+    sendSecure(client, semanticInputEvent());
+    expect((await receiveSecure(client))!.kind).toBe("ack");
+    client.socket.destroy();
+    await original.stop();
+    replacement = new DurablePrpControlPlane({ ...options, recoverSemanticToolInput: recover });
+    pending.push(replacement.recoverPendingSemanticInputs());
+    await vi.waitFor(() => expect(recover).toHaveBeenCalledOnce());
+    pending.push(replacement.recoverPendingSemanticInputs());
+    await new Promise<void>(resolveTurn => setImmediate(resolveTurn));
+    expect(recover).toHaveBeenCalledOnce();
+    resolveOutcome({ result: { receipt: "one-authoritative-outcome" } });
+    await Promise.all(pending);
+    await replacement.recoverPendingSemanticInputs();
+    expect(recover).toHaveBeenCalledOnce();
+    expect(replacement.store.state.commands.filter(command => command.type === "semantic_tool.result")).toHaveLength(1);
+  } finally {
+    resolveOutcome({ result: { receipt: "one-authoritative-outcome" } });
+    await Promise.allSettled(pending);
+    await replacement?.stop();
+    await original.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it.each([false, true])("dispatches a fresh semantic input once when recovery overlaps its checkpoint (saved outcome: %s)", async known => {
+  const root = mkdtempSync(resolve(tmpdir(), "runner-fresh-semantic-race-"));
   let releaseWrite!: () => void;
   const writeBarrier = new Promise<void>(resolveWrite => { releaseWrite = resolveWrite; });
-  let releaseOutcome!: (outcome: { result: unknown }) => void;
-  const outcome = new Promise<{ result: unknown }>(resolveOutcome => { releaseOutcome = resolveOutcome; });
-  const recover = vi.fn(async () => outcome);
-  const dispatch = vi.fn(async () => ({ result: "duplicate live completion" }));
+  let releaseRecovery!: () => void;
+  const recoveryBarrier = new Promise<void>(resolveRecovery => { releaseRecovery = resolveRecovery; });
+  let releaseDispatch!: () => void;
+  const dispatchBarrier = new Promise<void>(resolveDispatch => { releaseDispatch = resolveDispatch; });
+  const recover = vi.fn(async () => { await recoveryBarrier; return known ? { result: "stale recovery outcome" } : null; });
+  const dispatch = vi.fn(async () => { await dispatchBarrier; return { result: "original live outcome" }; });
   const core = new DurablePrpControlPlane({ stateDirectory: root, identity, expectedRunnerVersion,
     expectedRunnerDigest, onSemanticToolInput: dispatch, recoverSemanticToolInput: recover });
   core.setCheckpointPersistence(async saved => {
@@ -454,31 +493,25 @@ it.each(["recovery", "live"] as const)("reconciles one semantic call when %s dis
     await core.start();
     client = (await authenticate(core, core.issueBootstrapTicket()))!;
     sendSecure(client, semanticInputEvent());
-    // The input is committed while the live consumer still awaits its normal
-    // persistence barrier. This is the startup/recovery interleaving at issue.
     await vi.waitFor(() => expect(core.store.state.committedEvents).toHaveLength(1));
     pending.push(core.recoverPendingSemanticInputs());
-    await vi.waitFor(() => expect(recover).toHaveBeenCalledOnce());
-    if (competitor === "recovery") {
-      pending.push(core.recoverPendingSemanticInputs());
-      await new Promise<void>(resolveTurn => setImmediate(resolveTurn));
-      expect(recover).toHaveBeenCalledOnce();
-    }
+    await new Promise<void>(resolveTurn => setImmediate(resolveTurn));
+    expect(dispatch).not.toHaveBeenCalled(); // The durability barrier still applies.
     releaseWrite();
     expect((await receiveSecure(client))!.kind).toBe("ack");
-    expect(dispatch).not.toHaveBeenCalled();
-    releaseOutcome({ result: { receipt: "one-authoritative-outcome" } });
+    releaseRecovery();
     await Promise.all(pending);
-    expect(await receiveSecure(client)).toMatchObject({ kind: "command", payload: {
-      type: "semantic_tool.result", payload: { result: { receipt: "one-authoritative-outcome" } },
-    } });
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(recover).not.toHaveBeenCalled();
     await core.recoverPendingSemanticInputs();
-    expect(recover).toHaveBeenCalledOnce();
-    expect(dispatch).not.toHaveBeenCalled();
+    expect(recover).not.toHaveBeenCalled();
+    releaseDispatch();
+    expect(await receiveSecure(client)).toMatchObject({ kind: "command", payload: {
+      type: "semantic_tool.result", payload: { result: "original live outcome" },
+    } });
     expect(core.store.state.commands.filter(command => command.type === "semantic_tool.result")).toHaveLength(1);
   } finally {
-    releaseWrite();
-    releaseOutcome({ result: { receipt: "one-authoritative-outcome" } });
+    releaseWrite(); releaseRecovery(); releaseDispatch();
     await Promise.allSettled(pending);
     client?.socket.destroy();
     await core.stop();

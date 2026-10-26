@@ -3618,46 +3618,28 @@ export class DurablePrpControlPlane {
       });
       this.#store.state.ackedSourceSeq = sourceSeq;
     }
-    this.#store.saveEvent(existing ?? this.#store.state.committedEvents.at(-1)!);
-    await this.flushCheckpoint();
-    if (this.#eventOwner !== connection || this.#identity !== identity) return;
-
-    if (
-      isSemanticInput &&
-      this.#onSemanticToolInput &&
-      semantic !== undefined &&
-      typeof semantic.callId === "string" &&
-      typeof semantic.operationId === "string"
-    ) {
-      const call = {
-        callId: semantic.callId,
-        operationId: semantic.operationId,
-        input: semantic.input,
-        sourceEventId,
-        sourceEventType: eventType,
-        correlation: {
-          runId: this.#identity.runId,
-          normalizedSessionId: this.#identity.normalizedSessionId,
-          turnId: this.#identity.turnId,
-          itemId:
-            typeof event.itemId === "string"
-              ? event.itemId
-              : this.#identity.itemId,
-        },
-      };
-      const commandId = `command_tool_${createHash("sha256")
-        .update(`${this.#identity.runId}\0${call.callId}`)
-        .digest("hex")
-        .slice(0, 32)}`;
-      const alreadyQueued = this.#store.state.commands.some(
-        (command) => command.commandId === commandId,
-      );
-      // A committed input without a result after restart may already have
-      // changed the outside world. Never redispatch it on event replay. Only
-      // the original admitted callback may publish its result; missing outcome
-      // evidence stays pending for authoritative reconciliation.
-      if (existing === undefined && !alreadyQueued && !this.#pendingSemanticCalls.has(commandId)) {
-        this.#pendingSemanticCalls.add(commandId);
+    const liveCall = isSemanticInput && this.#onSemanticToolInput && semantic !== undefined
+      && typeof semantic.callId === "string" && typeof semantic.operationId === "string"
+      ? { callId: semantic.callId, operationId: semantic.operationId, input: semantic.input,
+          sourceEventId, sourceEventType: eventType,
+          correlation: { runId: identity.runId, normalizedSessionId: identity.normalizedSessionId,
+            turnId: identity.turnId, itemId: typeof event.itemId === "string" ? event.itemId : identity.itemId } }
+      : null;
+    const liveCommandId = liveCall ? `command_tool_${createHash("sha256")
+      .update(`${identity.runId}\0${liveCall.callId}`).digest("hex").slice(0, 32)}` : null;
+    const ownsLiveDispatch = existing === undefined && liveCommandId !== null
+      && !this.getCommand(liveCommandId) && !this.#pendingSemanticCalls.has(liveCommandId);
+    // Reserve the original callback before exposing its checkpoint wait to
+    // recovery. A missing saved outcome must never suppress first dispatch.
+    if (ownsLiveDispatch) this.#pendingSemanticCalls.add(liveCommandId!);
+    let dispatched = false;
+    try {
+      this.#store.saveEvent(existing ?? this.#store.state.committedEvents.at(-1)!);
+      await this.flushCheckpoint();
+      if (this.#eventOwner !== connection || this.#identity !== identity) return;
+      if (ownsLiveDispatch && liveCall && liveCommandId && this.#onSemanticToolInput && !this.getCommand(liveCommandId)) {
+        const call = liveCall;
+        const commandId = liveCommandId;
         const recordFailure = (stage: "persist_result" | "dispatch", error: unknown) => {
           this.#semanticResultPersistenceFailed = true;
           // Keep diagnostics bounded and content-free. Exception messages can
@@ -3690,7 +3672,9 @@ export class DurablePrpControlPlane {
             recordFailure("persist_result", error);
           }
         };
-        void this.#onSemanticToolInput(call)
+        const outcome = this.#onSemanticToolInput(call);
+        dispatched = true;
+        void outcome
           .then((outcome) =>
             queueResult(outcome.result, outcome.isError === true),
           )
@@ -3709,18 +3693,19 @@ export class DurablePrpControlPlane {
           })
           .finally(() => this.#pendingSemanticCalls.delete(commandId));
       }
+      this.#sendJson(connection,
+        this.#controlEnvelope(
+          connection,
+          `ack_${this.#store.state.ackedSourceSeq}`,
+          "ack",
+          {
+            ackedSourceSeq: this.#store.state.ackedSourceSeq,
+          },
+        ),
+      );
+    } finally {
+      if (ownsLiveDispatch && !dispatched) this.#pendingSemanticCalls.delete(liveCommandId!);
     }
-
-    this.#sendJson(connection,
-      this.#controlEnvelope(
-        connection,
-        `ack_${this.#store.state.ackedSourceSeq}`,
-        "ack",
-        {
-          ackedSourceSeq: this.#store.state.ackedSourceSeq,
-        },
-      ),
-    );
   }
 }
 

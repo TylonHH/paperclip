@@ -78,6 +78,11 @@ coalesced into the next control checkpoint. Authentication, command intents and
 outcomes, semantic inputs, lifecycle and result events retain commit barriers.
 Priority-zero and unknown event kinds are never treated as disposable output.
 
+Fresh semantic inputs reserve their original live callback before awaiting the
+checkpoint barrier. Recovery cannot steal first dispatch when no saved outcome
+exists. The reservation is released if persistence or admission fails; business
+execution still starts only after durable persistence succeeds.
+
 Recovery and live semantic-tool dispatch share per-call ownership. Overlapping
 reconciliation calls cannot invoke the same callback twice while its outcome is
 pending. An already queued authoritative result is replayed without resolving
