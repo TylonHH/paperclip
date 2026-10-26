@@ -943,3 +943,34 @@ The Cloud rollout path still requests task drain. Active different-artifact
 A→B/B→A, a normal drain-free Cloud rollout, other hosted harnesses, 25-way load
 and the complete viewer matrix remain open; PR 3 stays draft. Later launch-asset
 adoption fixes are not qualified by this artifact's hosted result.
+
+### Post-campaign review corrections (2026-10-26)
+
+Runner correction `1fb535d12b` makes live dispatch and semantic recovery share
+per-call ownership. Two authenticated-transport regressions first duplicated a
+callback, then pass with one authoritative result and no redispatch. Already
+queued results bypass repeated resolution. All 145 control-plane and 296
+transport tests pass. The wider 621-test run passed 620 and exposed an old pinned
+Copilot digest after source-attestation regeneration; its corrected 56-test
+profile retry passes. The active attestation changed; historical released
+fixtures did not. TypeScript, protocol generation, source identity and module
+boundary checks pass. The earlier failed run remains recorded.
+
+Server correction `e61605e197` recovers completed case/workflow mutations through
+their existing adapters and API receipt keys, without HTTP dispatch or another
+receipt reservation. Three real-Postgres/authenticated-route regressions fail
+before the correction and pass afterward, including missing, changed, pending,
+disabled-feature and Stop outcomes with unchanged domain effects. Server
+TypeScript passes. The broader run passed 97 tests and failed three held-output
+cases because a debug fixture binary remained from the runner-only PR. Its
+source and binary capability differed. Rebuilding the server-owned fixture and
+rerunning those three cases passes, including zero streaming checkpoint SQL,
+zero idle SQL, positive control calibration and empty-controller-file adoption.
+Both runs remain recorded. Build the fixture with the owning PR's source before
+running targeted native recovery tests after switching branches.
+
+These corrections follow the exact 73b65d87 hosted pass. That campaign does not
+qualify later artifacts or other harnesses. The superseded 54f3c879 preview build
+was cancelled after the fresh race and attestation findings, before deployment.
+The next candidate requires fresh checks and review. Different-artifact upgrade,
+compatible rollback and the ordinary Cloud drain policy remain open gates.
