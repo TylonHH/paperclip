@@ -82,7 +82,7 @@ it("restores authentication and commands from opaque checkpoint records", async 
   }
 });
 
-it.each(["missing record", "invalid state", "wrong sequence", "invalid preparation identity", "duplicate preparation"])("rejects %s at checkpoint decoding", async fault => {
+it.each(["missing record", "invalid state", "wrong sequence", "invalid preparation identity", "duplicate preparation", "malformed header", "malformed cursor"])("rejects %s at checkpoint decoding", async fault => {
   const root = mkdtempSync(resolve(tmpdir(), "runner-checkpoint-invalid-"));
   const core = new DurablePrpControlPlane({ stateDirectory: root, identity, expectedRunnerVersion, expectedRunnerDigest });
   let checkpoint!: DurablePrpCheckpoint;
@@ -92,6 +92,8 @@ it.each(["missing record", "invalid state", "wrong sequence", "invalid preparati
     await core.flushCheckpoint();
     const records = new Map(checkpoint.records);
     if (fault === "missing record") records.delete("command:1");
+    if (fault === "malformed header") records.set("header", "{");
+    if (fault === "malformed cursor") records.set("cursor", "{");
     if (fault === "invalid state") {
       const cursor = JSON.parse(records.get("cursor")!);
       cursor.ackedSourceSeq = -1;

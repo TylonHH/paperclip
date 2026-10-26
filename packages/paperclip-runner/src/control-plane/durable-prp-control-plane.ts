@@ -412,8 +412,13 @@ function checkpointState(records: ReadonlyMap<string, string>) {
 }
 
 export function decodeDurablePrpCheckpoint(records: ReadonlyMap<string, string>): DurablePrpCheckpoint {
-  const decoded = checkpointState(records);
-  return captureCheckpoint(decoded.state, decoded.runnerVersion, decoded.runnerDigest);
+  try {
+    const decoded = checkpointState(records);
+    return captureCheckpoint(decoded.state, decoded.runnerVersion, decoded.runnerDigest);
+  } catch (error) {
+    if (error instanceof SyntaxError) throw new Error("native_runner_checkpoint_invalid", { cause: error });
+    throw error;
+  }
 }
 
 export interface RunnerProcessResult {
