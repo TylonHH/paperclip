@@ -3986,6 +3986,8 @@ export function spawnRunner(options: {
   const environment = runnerEnvironment(options.ticket, options.identity.normalizedSessionId, options.environment);
   const withRestart = (handle: RunnerProcessHandle): RunnerProcessHandle => handle.restart === null ? handle : ({
     ...handle,
+    // Remote owners publish this identity after dispatch; keep it live through the wrapper.
+    get startedAt() { return handle.startedAt; },
     restart: (ticket) => {
       if (handle.isExitConfirmed?.() === false) {
         throw new Error("runner_process_termination_unconfirmed");

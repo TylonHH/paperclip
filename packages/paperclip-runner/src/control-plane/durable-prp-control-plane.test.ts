@@ -782,6 +782,26 @@ it.skipIf(process.platform === "win32")(
   },
 );
 
+it("retains process birth identity published after an external launch returns", async () => {
+  let startedAt: string | undefined;
+  const birth = "2026-10-26T12:00:00.000Z";
+  const handle = spawnRunner({
+    connection: { mode: "connect", connectUrl: "ws://127.0.0.1:43127" },
+    stateDirectory: "/tmp/paperclip-runner-deferred-identity", identity, ticket: "bootstrap-ticket",
+    maxOutboxBytes: 256 * 1024, p0ReserveBytes: 64 * 1024,
+    runnerVersion: expectedRunnerVersion, runnerDigest: expectedRunnerDigest,
+    processLauncher: () => ({
+      child: { pid: 42, exitCode: null, kill: () => true },
+      completion: new Promise(() => {}),
+      get startedAt() { return startedAt; },
+    }),
+  });
+  expect(handle.startedAt).toBeUndefined();
+  // The remote process marker arrives after the provider dispatch returns.
+  await Promise.resolve().then(() => { startedAt = birth; });
+  expect(handle.startedAt).toBe(birth);
+});
+
 it("does not release or replace a remote runner until its exit is confirmed", async () => {
   let exited = false;
   const launch = vi.fn(() => ({

@@ -443,6 +443,14 @@ A `revoke` envelope persists the `revoked` lifecycle. The runner flushes any
 existing durable events and exits. It does not accept new work or delete
 unacknowledged facts.
 
+## Process identity
+
+An external process owner can publish `startedAt` after launch dispatch returns.
+`spawnRunner` preserves that live value through its restart wrapper. Once the
+owner has a verified process identity, consumers use its birth time rather than
+controller construction or attachment time. Replacing the controller must not
+change the admitted process identity.
+
 ## Verification
 
 The production durable control plane and live-session suites cover reconnect,
