@@ -59,6 +59,12 @@ Live catch-up refreshes only the affected run. Each run has at most one history
 read in flight and one retry timer. Terminal notifications during a read coalesce
 into one subsequent read. A busy run cannot cancel a sibling's paginated history.
 This applies to both native commit signals and truncated legacy log chunks.
+If subscription acknowledgement aborts Agent Detail's first history request,
+negotiated recovery still drains the saved live tail without waiting for another
+source event. Its first page initializes the manual history cursor; subsequent
+catch-up pages use the independent recovery cursor. A completed run that was
+never live retains manual pagination.
+
 Agent Detail also refreshes its event history and shell log independently. A
 signal for one cannot abort the other's page or advance its persisted cursor;
 terminal notifications queue a follow-up for each active reader.

@@ -372,3 +372,45 @@ it.each([LogViewer, ProductionLogViewer].flatMap(Viewer => ["completed-return", 
     }
   } finally { await act(async () => root.unmount()); }
 }, 60_000);
+
+it.each([LogViewer, ProductionLogViewer])("recovers the latest saved tail when acknowledgement aborts the initial history read (%#)", async Viewer => {
+  vi.useFakeTimers();
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  log.mockResolvedValue({ content: "", nextOffset: 0 });
+  const run = { id: "run-1", companyId: "company-1", agentId: "agent-1", status: "running" } as HeartbeatRun;
+  const rows: HeartbeatRunEvent[] = Array.from({ length: 5_000 }, (_, index) => ({
+    id: index + 1, seq: index + 1, runId: run.id, companyId: run.companyId, agentId: run.agentId,
+    createdAt: new Date(), eventType: "output", stream: "system", level: "info", color: null,
+    message: `initial-ack-proof-${index + 1}-end`, payload: null,
+  }));
+  let finishInitial!: (value: HeartbeatRunEvent[]) => void;
+  events.mockImplementation((_id, cursor = 0) => Promise.resolve(rows.filter(row => row.seq > cursor).slice(0, 1_000)));
+  events.mockImplementationOnce(() => new Promise(resolve => { finishInitial = resolve; }));
+  const transcripts = new LiveTranscriptInterests(), sent: Array<{ revision?: number }> = [];
+  const subscription = { companyId: run.companyId, transcripts, subscribe: () => () => {} };
+  const container = document.createElement("div"), root = createRoot(container);
+  const { LiveEventSubscriptionContext } = __liveUpdatesTestUtils;
+  try {
+    await act(async () => root.render(<LiveEventSubscriptionContext.Provider value={subscription}><Viewer run={run} adapterType="paperclip_runner" /></LiveEventSubscriptionContext.Provider>));
+    const initialSignal = events.mock.calls[0]![3]!.signal!;
+    await act(async () => {
+      transcripts.open({ send: text => sent.push(JSON.parse(text)) });
+      transcripts.receive({ type: "live.capabilities", version: 1, capabilities: ["run-interests"] });
+      transcripts.receive({ type: "live.subscribed", version: 1, revision: sent.at(-1)?.revision });
+    });
+    expect(initialSignal.aborted).toBe(true);
+    expect(container.textContent).toContain("initial-ack-proof-5000-end");
+    const more = [...container.querySelectorAll("button")].find(button => button.textContent === "Load more events");
+    expect(more).toBeDefined();
+    await act(async () => more!.click());
+    expect(events.mock.calls.at(-1)?.slice(0, 3)).toEqual([run.id, 1_000, 1_000]);
+    expect(container.textContent).toContain("initial-ack-proof-1500-end");
+    expect(container.textContent).toContain("initial-ack-proof-5000-end");
+    const settledReads = events.mock.calls.length;
+    await act(async () => vi.advanceTimersByTimeAsync(90_000));
+    expect(events).toHaveBeenCalledTimes(settledReads);
+  } finally {
+    finishInitial([]);
+    await act(async () => root.unmount());
+  }
+}, 60_000);

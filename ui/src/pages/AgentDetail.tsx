@@ -4212,9 +4212,12 @@ export function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType
       let failed = false;
       try {
         const cursor = catchup ? Math.max(eventsCatchupCursorRef.current, eventsReadCursorRef.current) : eventsReadCursorRef.current;
+        const initializesHistory = eventsReadCursorRef.current === 0;
         const rows = await readTranscriptRequest(signal => heartbeatsApi.events(run.id, cursor, 1000, { signal }), abort.signal);
         if (cancelled) return;
-        appendEvents(rows, !catchup);
+        // If negotiation replaced the first read, retain its first history
+        // page before draining the live tail with the independent cursor.
+        appendEvents(rows, !catchup || initializesHistory);
         const next = Math.max(cursor, rows.at(-1)?.seq ?? cursor);
         eventsCatchupCursorRef.current = Math.max(eventsCatchupCursorRef.current, next);
         eventSequenceRef.current.confirm(next);
@@ -4222,7 +4225,8 @@ export function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType
           // Each request remains bounded; only a known recovery drains further.
           // A short page settles this pass even if no live row supplied a target.
           if (rows.length === 1000 && next > cursor) pendingRefresh = true;
-        } else {
+        }
+        if (!catchup || initializesHistory) {
           eventsReadCursorRef.current = next;
           hasMoreEventsRef.current = rows.length === 1000 && next > cursor;
           setHasMoreEvents(hasMoreEventsRef.current);
@@ -4244,7 +4248,7 @@ export function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType
     loadMoreEventsRef.current = () => { void read(failedRead?.requested ?? true, failedRead?.catchup ?? false); };
     // Reconnection, resynchronization and terminal status all receive one
     // catch-up pass; healthy consecutive delivery does not schedule HTTP reads.
-    void read(false, wasLiveRef.current && eventsReadCursorRef.current > 0);
+    void read(false, wasLiveRef.current && (stream.healthy || eventsReadCursorRef.current > 0));
     return () => {
       cancelled = true; refreshEventsRef.current = null; loadMoreEventsRef.current = null;
       abort.abort(); if (timer !== undefined) window.clearTimeout(timer);
