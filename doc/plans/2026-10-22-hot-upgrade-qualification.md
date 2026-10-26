@@ -899,3 +899,47 @@ zero provider turns and does not qualify a hosted agent or a different artifact.
 
 This qualification-only follow-up is separate from the immutable production
 candidate `73b65d8718fe763a23c53584ac6a82863965b786` being prepared for hosted tests.
+
+### Strict hosted Codex restart qualification passed (2026-10-26)
+
+Exact Core artifact `73b65d8718fe763a23c53584ac6a82863965b786` passed the
+unchanged strict identity/effect grader on the dedicated synthetic test tenant.
+The maintained Cloud deployment verified that revision before model use. This
+was Linux, real Postgres, Daytona, production Runner and native Codex with
+OpenAI `gpt-5.4-mini` through the approved capped gateway, without customer data.
+
+A 15-second freeze/kill control passed first. Ten ordinary tasks then each ran
+600 deterministic hash-chain steps and emitted 4 KiB per step. The exact main
+Node process was frozen at 18:36:05.374Z and killed at 18:41:06.139Z. Postgres and
+Daytona stayed up; no lease timestamp was changed. HTTP readiness was observed
+by 316.474 seconds, natural ownership at 319.682–320.245 seconds, and new
+authenticated attachment plus canonical ingestion for all ten by 389.839 seconds,
+inside the original 420-second grace. These are observation upper bounds.
+
+All ten retained run, runner, native session, PID, process birth time and sandbox
+lease while still active after recovery. Each advanced 296–300 useful steps
+during the outage and completed all 600 with the independently recomputed chain
+and a single exclusive effect. The largest step gap was 1.947 seconds. Each
+finalized once, committed its workspace export and left no queued recovery.
+Fresh work was admitted while originals were active and completed separately.
+The strict grade is **10/10 passed**. The prior two **0/10 failed** grades remain
+preserved; the successful getter fix did not remove the process-birth assertion.
+
+This campaign settled 190 provider requests at $0.642828150 estimated model cost.
+All three campaigns total $1.973814300 estimated, below the approved $25 cap,
+with no held, unknown or inflight requests. Owned agents were paused and the
+temporary gateway closed. Test-instance CLI access was retained as requested.
+The complete report and evidence work product are attached to the existing
+private test task; private URLs are omitted from this public repository.
+
+Candidate CI first lost workers in Vitest/browser shards; logs and annotations
+remain recorded. A bounded retry passed on the same revision. Full repository
+typecheck/build passed. A frozen SQL observer produced no usable receipt in this
+campaign, so it adds no new SQL, traffic, CPU, memory or capacity measurement.
+The earlier frozen-write observations remain attributed to their older artifact.
+
+This qualifies a **same-artifact main-process crash/restart for this profile**.
+The Cloud rollout path still requests task drain. Active different-artifact
+A→B/B→A, a normal drain-free Cloud rollout, other hosted harnesses, 25-way load
+and the complete viewer matrix remain open; PR 3 stays draft. Later launch-asset
+adoption fixes are not qualified by this artifact's hosted result.
