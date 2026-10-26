@@ -974,3 +974,29 @@ qualify later artifacts or other harnesses. The superseded 54f3c879 preview buil
 was cancelled after the fresh race and attestation findings, before deployment.
 The next candidate requires fresh checks and review. Different-artifact upgrade,
 compatible rollback and the ordinary Cloud drain policy remain open gates.
+
+### Fresh-call ownership and initial-view recovery review (2026-10-26)
+
+A subsequent review exposed a distinct ownership case: reconciliation could
+claim a fresh input during its persistence barrier, then return no saved outcome
+and suppress its original callback. Runner correction `e042344de2` reserves live
+ownership before that wait. Fresh missing/stale-outcome overlap tests fail before
+it and pass afterward, while saved-input concurrent reconciliation still resolves
+once. Failed persistence still cannot dispatch. All 146 control-plane and 296
+transport tests pass, with a final 146-test control-plane retry and TypeScript
+check after the callback-binding refinement.
+
+Agent Detail also needs negotiated tail recovery when acknowledgement aborts its
+first history read before a cursor exists. Both page variants now retain one
+manual history page, then drain their independent recovery cursor without a new
+source event. Two 5,000-row regressions fail before the fix, then show the latest
+saved tail, retain manual pagination, and add no recurring reads. All 361 affected
+UI tests, UI typecheck and token gates pass.
+
+The 051bc00a candidate build was cancelled before deployment after those findings.
+A new candidate must first receive fresh CI and review. Its earlier local browser
+journey pass remains attributed to 051bc00a, rather than the subsequent source.
+The 051bc00a chat shard also failed an unchanged assertion: a provider-effect
+receipt was still processing instead of processed. Its isolated same-job retry
+passed, but the original job remains failed. This is recorded as an observed
+assertion-timing failure, not a worker-loss incident or a proven production fix.
