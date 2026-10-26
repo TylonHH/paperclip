@@ -1841,18 +1841,23 @@ export class DurablePrpControlPlane {
       if (!semantic || event.runId !== identity.runId || event.normalizedSessionId !== identity.normalizedSessionId) continue;
       if (typeof semantic.callId !== "string" || typeof semantic.operationId !== "string") continue;
       const commandId = `command_tool_${createHash("sha256").update(`${identity.runId}\0${semantic.callId}`).digest("hex").slice(0, 32)}`;
-      if (this.#pendingSemanticCalls.has(commandId)) continue;
-      const call = { callId: semantic.callId, operationId: semantic.operationId, input: semantic.input,
-        sourceEventId: event.sourceEventId, sourceEventType: event.eventType,
-        correlation: { runId: identity.runId, normalizedSessionId: identity.normalizedSessionId,
-          turnId: identity.turnId, itemId: event.itemId ?? identity.itemId } };
-      const outcome = await this.#recoverSemanticToolInput(call);
-      if (this.#identity !== identity || this.#semanticCallbacksRetired) return;
-      if (!outcome || this.getCommand(commandId)) continue;
-      const { input, ...metadata } = call;
-      this.queueCommand("semantic_tool.result", { ...metadata, inputDigest: canonicalDigest(input),
-        result: outcome.result, isError: outcome.isError === true }, commandId, true);
-      await this.flushCheckpoint();
+      if (this.#pendingSemanticCalls.has(commandId) || this.getCommand(commandId)) continue;
+      this.#pendingSemanticCalls.add(commandId);
+      try {
+        const call = { callId: semantic.callId, operationId: semantic.operationId, input: semantic.input,
+          sourceEventId: event.sourceEventId, sourceEventType: event.eventType,
+          correlation: { runId: identity.runId, normalizedSessionId: identity.normalizedSessionId,
+            turnId: identity.turnId, itemId: event.itemId ?? identity.itemId } };
+        const outcome = await this.#recoverSemanticToolInput(call);
+        if (this.#identity !== identity || this.#semanticCallbacksRetired) return;
+        if (!outcome || this.getCommand(commandId)) continue;
+        const { input, ...metadata } = call;
+        this.queueCommand("semantic_tool.result", { ...metadata, inputDigest: canonicalDigest(input),
+          result: outcome.result, isError: outcome.isError === true }, commandId, true);
+        await this.flushCheckpoint();
+      } finally {
+        this.#pendingSemanticCalls.delete(commandId);
+      }
     }
   }
 

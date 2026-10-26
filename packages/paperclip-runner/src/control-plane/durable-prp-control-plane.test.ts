@@ -435,6 +435,57 @@ it.each([true, false])("reconciles a saved semantic input only from an authorita
   }
 });
 
+it.each(["recovery", "live"] as const)("reconciles one semantic call when %s dispatch overlaps recovery", async competitor => {
+  const root = mkdtempSync(resolve(tmpdir(), "runner-semantic-recovery-race-"));
+  let releaseWrite!: () => void;
+  const writeBarrier = new Promise<void>(resolveWrite => { releaseWrite = resolveWrite; });
+  let releaseOutcome!: (outcome: { result: unknown }) => void;
+  const outcome = new Promise<{ result: unknown }>(resolveOutcome => { releaseOutcome = resolveOutcome; });
+  const recover = vi.fn(async () => outcome);
+  const dispatch = vi.fn(async () => ({ result: "duplicate live completion" }));
+  const core = new DurablePrpControlPlane({ stateDirectory: root, identity, expectedRunnerVersion,
+    expectedRunnerDigest, onSemanticToolInput: dispatch, recoverSemanticToolInput: recover });
+  core.setCheckpointPersistence(async saved => {
+    if (JSON.parse(saved.records.get("cursor")!).ackedSourceSeq > 0) await writeBarrier;
+  });
+  const pending: Promise<void>[] = [];
+  let client: Awaited<ReturnType<typeof authenticate>>;
+  try {
+    await core.start();
+    client = (await authenticate(core, core.issueBootstrapTicket()))!;
+    sendSecure(client, semanticInputEvent());
+    // The input is committed while the live consumer still awaits its normal
+    // persistence barrier. This is the startup/recovery interleaving at issue.
+    await vi.waitFor(() => expect(core.store.state.committedEvents).toHaveLength(1));
+    pending.push(core.recoverPendingSemanticInputs());
+    await vi.waitFor(() => expect(recover).toHaveBeenCalledOnce());
+    if (competitor === "recovery") {
+      pending.push(core.recoverPendingSemanticInputs());
+      await new Promise<void>(resolveTurn => setImmediate(resolveTurn));
+      expect(recover).toHaveBeenCalledOnce();
+    }
+    releaseWrite();
+    expect((await receiveSecure(client))!.kind).toBe("ack");
+    expect(dispatch).not.toHaveBeenCalled();
+    releaseOutcome({ result: { receipt: "one-authoritative-outcome" } });
+    await Promise.all(pending);
+    expect(await receiveSecure(client)).toMatchObject({ kind: "command", payload: {
+      type: "semantic_tool.result", payload: { result: { receipt: "one-authoritative-outcome" } },
+    } });
+    await core.recoverPendingSemanticInputs();
+    expect(recover).toHaveBeenCalledOnce();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(core.store.state.commands.filter(command => command.type === "semantic_tool.result")).toHaveLength(1);
+  } finally {
+    releaseWrite();
+    releaseOutcome({ result: { receipt: "one-authoritative-outcome" } });
+    await Promise.allSettled(pending);
+    client?.socket.destroy();
+    await core.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 it("commits credential updates before ACK and preserves replay identity", async () => {
   const root = mkdtempSync(resolve(tmpdir(), "runner-credential-update-"));
   let release!: () => void;

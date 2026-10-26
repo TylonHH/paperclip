@@ -78,6 +78,12 @@ coalesced into the next control checkpoint. Authentication, command intents and
 outcomes, semantic inputs, lifecycle and result events retain commit barriers.
 Priority-zero and unknown event kinds are never treated as disposable output.
 
+Recovery and live semantic-tool dispatch share per-call ownership. Overlapping
+reconciliation calls cannot invoke the same callback twice while its outcome is
+pending. An already queued authoritative result is replayed without resolving
+its business outcome again. Failed or unknown outcomes retain the existing
+reconciliation and authority rules.
+
 A rejected persistence callback closes the current connection and keeps the last
 successful revision. A later flush or reconnect retries from a complete checkpoint,
 including when the failed response hid a successful commit. Queued writes also
