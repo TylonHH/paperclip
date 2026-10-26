@@ -875,3 +875,27 @@ replaced a workload or edited lease timing.
 Different-artifact active upgrade/rollback, normal Cloud drain-free rollout,
 Claude, 25-way load and the full viewer/CPU/memory cost matrix remain open. The
 current Cloud campaign still requests task drain. PR 3 remains draft.
+
+### Qualification receipt review follow-up (2026-10-26)
+
+The everyday harness digest now includes `controller-recovery-observer.ts` and
+`upgrade-artifacts.ts`, whose checks decide upgrade acceptance. The credential-free
+smoke captures its owned embedded Postgres PID from the cluster before replacement.
+After the bounded database helper returns, it separately requires that process to
+have exited before reporting `cleanupConfirmed`. Missing identity, permission
+errors and an exit timeout fail confirmation. This probe sends no terminating
+signal and does not stop an externally supplied shared cluster; external cleanup
+still awaits deletion of only its own disposable database.
+
+A real child-process regression reproduces the old false success when cleanup
+returns with its owner still alive. That regression and the missing-identity case
+fail before correction; all 69 affected qualification tests pass after it. The
+qualification typecheck initially found stale runner declarations in the separate
+worktree. Rebuilding the existing dependency fixed those declaration errors; the
+retry passed without a source workaround. One credential-free real embedded-
+Postgres/main-server replacement then passed, including continued database
+identity, ordinary mutation admission and confirmed final process exit. It reports
+zero provider turns and does not qualify a hosted agent or a different artifact.
+
+This qualification-only follow-up is separate from the immutable production
+candidate `73b65d8718fe763a23c53584ac6a82863965b786` being prepared for hosted tests.

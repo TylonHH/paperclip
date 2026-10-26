@@ -599,6 +599,8 @@ export async function runEverydayFlow(input: Input) {
       "everyday-observations.ts",
       "everyday-remote-restart.ts",
       "controller-outage.ts",
+      "controller-recovery-observer.ts",
+      "upgrade-artifacts.ts",
       "server.ts",
       "server-stop.ts",
       "native-event-envelope.ts",

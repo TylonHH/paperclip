@@ -17,6 +17,7 @@ import { runnerE2EServerControlPaths } from "./harness-env.js";
 import { reserveRunnerE2EServerPort } from "./ports.js";
 import { createRunnerE2ETemporaryRoot, prepareRunnerE2EServerConfig } from "./server-config.js";
 import { createRunnerE2EServerStopper } from "./server-stop.js";
+import { cleanupControllerSmokeDatabase } from "./controller-smoke-cleanup.js";
 import { runnerE2ETypeScriptProcessArgs } from "./web-server-command.js";
 
 const outage = configuredControllerOutage(process.env);
@@ -59,7 +60,15 @@ const stopper = createRunnerE2EServerStopper({ gracefulTimeoutMs: 35_000, forced
   hasSpawnError: () => false, markExpectedStop: () => {}, log: message => log.write(message) });
 let wrapper: ReturnType<typeof spawn> | undefined;
 let failure: unknown;
+let ownedPostgresProcessId: number | null | undefined = process.env.PAPERCLIP_TEST_DATABASE_URL ? null : undefined;
+report.databaseCleanupScope = ownedPostgresProcessId === null ? "owned_database" : "owned_cluster_process";
 try {
+  if (ownedPostgresProcessId !== null) {
+    const [owner] = await db.$client`select split_part(pg_read_file('postmaster.pid', 0, 64), chr(10), 1)::int as pid`;
+    const pid = Number(owner?.pid);
+    if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error("owned_postgres_identity_unavailable");
+    ownedPostgresProcessId = pid;
+  }
   const reservation = await prepareRunnerE2EServerConfig({ temporaryRoot, configPath, serverPort: port });
   await reservation?.close();
   const config = paperclipConfigSchema.parse(JSON.parse(await readFile(configPath, "utf8")));
@@ -131,7 +140,7 @@ try {
   Object.assign(report, { passed: false, error: error instanceof Error ? error.message : String(error) });
 } finally {
   const cleanupErrors: string[] = [];
-  for (const cleanup of [() => stopper.stopAll(), () => db.$client.end(), () => database.cleanup()]) {
+  for (const cleanup of [() => stopper.stopAll(), () => db.$client.end(), () => cleanupControllerSmokeDatabase(database, ownedPostgresProcessId)]) {
     try { await cleanup(); }
     catch (error) { failure ??= error; cleanupErrors.push(error instanceof Error ? error.message : String(error)); }
   }
