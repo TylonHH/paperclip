@@ -84,7 +84,7 @@ describe("useLiveRunTranscripts", () => {
     socketConstructed = vi.fn();
     useQueryMock.mockClear();
     logMock.mockReset();
-    logMock.mockImplementation(async () => ({ runId: "run-1", store: "memory", logRef: "log-1", content: "", nextOffset: 0 }));
+    logMock.mockImplementation(async (_id, offset) => ({ runId: "run-1", store: "memory", logRef: "log-1", content: "", nextOffset: offset }));
     buildTranscriptMock.mockClear();
     globalThis.WebSocket = class { constructor() { socketConstructed(); } } as unknown as typeof WebSocket;
   });
@@ -137,6 +137,7 @@ describe("useLiveRunTranscripts", () => {
     const result = (content: string) => ({ runId: "run-1", store: "memory", logRef: "log-1", content, nextOffset: 100_000 });
     let resolveExpanded!: (value: ReturnType<typeof result>) => void;
     logMock.mockResolvedValueOnce(result(`${row(2, "Latest answer")}\n`));
+    logMock.mockResolvedValueOnce(result(""));
     logMock.mockImplementationOnce(() => new Promise(resolve => { resolveExpanded = resolve; }));
     function Harness({ limit, bytes = 100_000 }: { limit: number; bytes?: number }) {
       useLiveRunTranscripts({
@@ -150,7 +151,7 @@ describe("useLiveRunTranscripts", () => {
     const chunks = () => buildTranscriptMock.mock.calls.at(-1)?.[0];
     try {
       await act(async () => root.render(<Harness limit={32_000} />));
-      expect(logMock).toHaveBeenLastCalledWith("run-1", 68_000, 32_000, expect.objectContaining({ alignStartToRecord: true }));
+      expect(logMock).toHaveBeenCalledWith("run-1", 68_000, 32_000, expect.objectContaining({ alignStartToRecord: true }));
       expect(chunks()).toEqual([expect.objectContaining({ chunk: "Latest answer" })]);
       await act(async () => root.render(<Harness limit={256_000} />));
       expect(logMock).toHaveBeenLastCalledWith("run-1", 0, 256_000, expect.anything());
@@ -173,6 +174,7 @@ describe("useLiveRunTranscripts", () => {
     const earlier = row(1, "Earlier activity");
     const recent = row(2, "Latest answer");
     logMock.mockResolvedValueOnce(result(`${recent}\n`));
+    logMock.mockResolvedValueOnce(result(""));
     logMock.mockRejectedValueOnce(new Error("Temporary storage failure"));
     logMock.mockImplementationOnce(async (...args: unknown[]) => {
       const options = args[3] as { alignStartToRecord?: boolean };
@@ -199,7 +201,7 @@ describe("useLiveRunTranscripts", () => {
         expect.objectContaining({ chunk: "Earlier activity" }),
         expect.objectContaining({ chunk: "Latest answer" }),
       ]);
-      expect(logMock).toHaveBeenLastCalledWith("run-1", 244_000, 256_000, expect.objectContaining({ alignStartToRecord: true }));
+      expect(logMock).toHaveBeenCalledWith("run-1", 244_000, 256_000, expect.objectContaining({ alignStartToRecord: true }));
       expect(latest.errorsByRun.size).toBe(0);
       await act(async () => root.render(<Harness limit={256_000} bytes={520_000} />));
       expect(logMock).toHaveBeenLastCalledWith("run-1", 500_000, 256_000, expect.not.objectContaining({ alignStartToRecord: true }));
@@ -926,6 +928,44 @@ describe("useLiveRunTranscripts", () => {
       await act(async () => vi.advanceTimersByTimeAsync(30_000));
       expect(logMock.mock.calls.length).toBeGreaterThan(afterDisconnect);
       expect(socketConstructed).not.toHaveBeenCalled();
+    } finally { await act(async () => root.unmount()); }
+  });
+
+  it("reads past a running run's stale byte count after hide/show without another live event", async () => {
+    vi.useFakeTimers();
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    const line = (seq: number, chunk: string) => JSON.stringify({ seq, chunk, ts: "2026-10-26T00:00:00Z", stream: "stdout" }) + "\n";
+    const segments = [line(1, "initial output")];
+    const originalBytes = segments[0]!.length;
+    logMock.mockImplementation(async (_id, offset) => {
+      let cursor = 0;
+      for (const segment of segments) {
+        if (cursor === offset) return { runId: "run-1", store: "memory", logRef: "log-1", content: segment, nextOffset: offset + segment.length };
+        cursor += segment.length;
+      }
+      return { runId: "run-1", store: "memory", logRef: "log-1", content: "", nextOffset: offset };
+    });
+    function Harness() {
+      useLiveRunTranscripts({ companyId: "company-1", runs: [{ id: "run-1", status: "running", adapterType: "codex_local", logBytes: originalBytes }] });
+      return null;
+    }
+    const root = createRoot(document.createElement("div"));
+    try {
+      await act(async () => root.render(<Harness />));
+      await act(async () => negotiate());
+      await act(async () => { visibility.mockReturnValue("hidden"); document.dispatchEvent(new Event("visibilitychange")); });
+      segments.push(line(2, "saved during disconnect"), line(3, "last saved page"));
+      await act(async () => { visibility.mockReturnValue("visible"); document.dispatchEvent(new Event("visibilitychange")); });
+      await act(async () => acknowledge());
+      const chunks = buildTranscriptMock.mock.calls.at(-1)?.[0];
+      expect(chunks).toEqual([
+        expect.objectContaining({ chunk: "initial output" }),
+        expect.objectContaining({ chunk: "saved during disconnect" }),
+        expect.objectContaining({ chunk: "last saved page" }),
+      ]);
+      const caughtUp = logMock.mock.calls.length;
+      await act(async () => vi.advanceTimersByTimeAsync(90_000));
+      expect(logMock).toHaveBeenCalledTimes(caughtUp);
     } finally { await act(async () => root.unmount()); }
   });
 

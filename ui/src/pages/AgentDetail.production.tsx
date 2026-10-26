@@ -3913,6 +3913,7 @@ export function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType
     const abort = new AbortController();
     let reading = false;
     let pendingRefresh = false;
+    let failedRead: { requested: boolean; catchup: boolean } | null = null;
     const read = async (requested = false, catchup = false) => {
       if (cancelled) return;
       if (reading) { if (catchup) pendingRefresh = true; return; }
@@ -3938,7 +3939,11 @@ export function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType
           setHasMoreEvents(hasMoreEventsRef.current);
         }
         failed = eventSequenceRef.current.needsCatchup;
-      } catch { failed = true; if (!cancelled) setEventsError("Could not load events. Try again."); }
+        failedRead = null;
+      } catch {
+        failed = true; failedRead = { requested, catchup };
+        if (!cancelled) setEventsError("Could not load events. Try again.");
+      }
       if (cancelled) return;
       reading = false; setLoadingMoreEvents(false); setLoading(false);
       if (pendingRefresh) void read(false, true);
@@ -3946,11 +3951,11 @@ export function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType
         timer = window.setTimeout(() => void read(requested, catchup || eventSequenceRef.current.needsCatchup), 2000);
       }
     };
-    refreshEventsRef.current = () => { void read(false, true); };
-    loadMoreEventsRef.current = () => { void read(true); };
+    refreshEventsRef.current = () => { void read(false, wasLiveRef.current); };
+    loadMoreEventsRef.current = () => { void read(failedRead?.requested ?? true, failedRead?.catchup ?? false); };
     // Reconnection, resynchronization and terminal status all receive one
     // catch-up pass; healthy consecutive delivery does not schedule HTTP reads.
-    void read(false, eventsReadCursorRef.current > 0);
+    void read(false, wasLiveRef.current && eventsReadCursorRef.current > 0);
     return () => {
       cancelled = true; refreshEventsRef.current = null; loadMoreEventsRef.current = null;
       abort.abort(); if (timer !== undefined) window.clearTimeout(timer);

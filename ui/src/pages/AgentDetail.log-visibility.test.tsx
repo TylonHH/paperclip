@@ -325,3 +325,50 @@ it.each([LogViewer, ProductionLogViewer])("recovers a paginated live tail and pr
     expect(container.textContent).toContain("activity-proof-1500-end");
   } finally { await act(async () => root.unmount()); }
 }, 60_000);
+
+
+it.each([LogViewer, ProductionLogViewer].flatMap(Viewer => ["completed-return", "catchup-retry"].map(mode => ({ Viewer, mode }))))("preserves event read mode for $mode (%#)", async ({ Viewer, mode }) => {
+  vi.useFakeTimers();
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  log.mockResolvedValue({ content: "", nextOffset: 0 });
+  const run = { id: "run-1", companyId: "company-1", agentId: "agent-1", status: mode === "completed-return" ? "succeeded" : "running" } as HeartbeatRun;
+  const rows: HeartbeatRunEvent[] = Array.from({ length: mode === "completed-return" ? 2_001 : 5_000 }, (_, index) => ({
+    id: index + 1, seq: index + 1, runId: run.id, companyId: run.companyId, agentId: run.agentId,
+    createdAt: new Date(), eventType: "output", stream: "system", level: "info", color: null,
+    message: `mode-proof-${index + 1}-end`, payload: null,
+  }));
+  let failRecovery = mode === "catchup-retry";
+  events.mockImplementation(async (_id, cursor = 0) => {
+    if (cursor === 4_000 && failRecovery) { failRecovery = false; throw new Error("saved tail temporarily unavailable"); }
+    return rows.filter(row => row.seq > cursor).slice(0, 1_000);
+  });
+  const transcripts = new LiveTranscriptInterests(), sent: Array<{ revision?: number }> = [];
+  const subscription = { companyId: run.companyId, transcripts, subscribe: () => () => {} };
+  const container = document.createElement("div"), root = createRoot(container);
+  const { LiveEventSubscriptionContext } = __liveUpdatesTestUtils;
+  try {
+    await act(async () => root.render(<LiveEventSubscriptionContext.Provider value={subscription}><Viewer run={run} adapterType="paperclip_runner" /></LiveEventSubscriptionContext.Provider>));
+    expect(events).toHaveBeenCalledTimes(1);
+    if (mode === "completed-return") {
+      await act(async () => { visibility.mockReturnValue("hidden"); document.dispatchEvent(new Event("visibilitychange")); });
+      await act(async () => { visibility.mockReturnValue("visible"); document.dispatchEvent(new Event("visibilitychange")); });
+      expect(events).toHaveBeenCalledTimes(1);
+      expect(container.textContent).not.toContain("mode-proof-2001-end");
+    } else {
+      await act(async () => {
+        transcripts.open({ send: text => sent.push(JSON.parse(text)) });
+        transcripts.receive({ type: "live.capabilities", version: 1, capabilities: ["run-interests"] });
+        transcripts.receive({ type: "live.subscribed", version: 1, revision: sent.at(-1)?.revision });
+      });
+      expect(container.textContent).toContain("Could not load events. Try again.");
+      const retry = [...container.querySelectorAll("button")].find(button => button.textContent === "Retry events");
+      expect(retry).toBeDefined();
+      await act(async () => retry!.click());
+      expect(container.textContent).toContain("mode-proof-5000-end");
+      expect(events.mock.calls.filter(call => call[1] === 4_000)).toHaveLength(2);
+      const caughtUp = events.mock.calls.length;
+      await act(async () => vi.advanceTimersByTimeAsync(90_000));
+      expect(events).toHaveBeenCalledTimes(caughtUp);
+    }
+  } finally { await act(async () => root.unmount()); }
+}, 60_000);

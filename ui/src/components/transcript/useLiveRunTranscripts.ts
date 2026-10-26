@@ -466,7 +466,6 @@ export function useLiveRunTranscripts({
           const next = result.nextOffset ?? offset + new TextEncoder().encode(result.content).byteLength;
           logOffsetByRunRef.current.set(run.id, next);
           if (result.nextOffset === undefined || result.content.length === 0 || next <= offset) break;
-          if (typeof run.logBytes === "number" && next >= run.logBytes && !sequence(run.id).needsCatchup) break;
           offset = next;
         }
         failed = sequence(run.id).needsCatchup;
