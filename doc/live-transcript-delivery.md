@@ -41,6 +41,13 @@ legacy logs also track log identity and persisted byte offsets. Streamed rows
 never advance the persisted-history cursor. A second sequence gap observed during
 an in-flight read remains pending until history covers it.
 
+Compact conversation history intentionally excludes tool and reasoning rows.
+After a complete filtered scan, its coverage includes the committed sequence known
+before that read began, even when no matching conversation row has that sequence.
+This settles excluded activity without recurring reads or downloading the full
+event stream. A later notification cannot be covered by an older in-flight scan;
+its catch-up must still recover any intervening conversation rows.
+
 Native publication signals carry a committed sequence without a PRP body. They
 trigger a canonical read through that sequence, including consecutive signals,
 and never enter the transcript merge. A delayed signal cannot replace complete

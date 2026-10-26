@@ -9,7 +9,8 @@ import { useNativeRunTranscripts } from "./useNativeRunTranscripts";
 import { nativeRunEventsToTranscript } from "./native-run-events";
 
 const events = vi.hoisted(() => vi.fn());
-vi.mock("../../api/heartbeats", () => ({ heartbeatsApi: { events } }));
+const conversationEvents = vi.hoisted(() => vi.fn());
+vi.mock("../../api/heartbeats", () => ({ heartbeatsApi: { events, conversationEvents } }));
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const { LiveEventSubscriptionContext } = __liveUpdatesTestUtils;
 let root: Root;
@@ -27,22 +28,24 @@ const row = (seq: number, message = `row ${seq}`, runId = "run-1"): HeartbeatRun
     emittedAt: "2026-10-24T00:00:00Z", payload: { kind: "agentMessage", channel: "progress", text: message },
   } }, createdAt: new Date("2026-10-24T00:00:00Z"),
 });
-function emit(seq: number, signalOnly = false) {
+function emit(seq: number, signalOnly = false, kind = "agentMessage") {
   const value = row(seq);
+  const envelope = value.payload!.prpEvent as { payload: Record<string, unknown> };
+  envelope.payload = { ...envelope.payload, kind };
   const event: LiveEvent = { id: seq, companyId: value.companyId, type: "heartbeat.run.event", createdAt: value.createdAt.toISOString(), payload: signalOnly
     ? { runId: value.runId, agentId: value.agentId, eventType: value.eventType, seq }
     : { ...value } };
   for (const listener of listeners) listener(event);
 }
-function Probe({ companyId = "company-1", enabled = true, older = false }: { companyId?: string; enabled?: boolean; older?: boolean }) {
+function Probe({ companyId = "company-1", enabled = true, older = false, compact = false }: { companyId?: string; enabled?: boolean; older?: boolean; compact?: boolean }) {
   latest = useNativeRunTranscripts([
-    { id: "run-1", status: "running", runtimeMode: "native" },
+    { id: "run-1", status: "running", runtimeMode: "native", conversationOnly: compact },
     ...(older ? [{ id: "older", status: "succeeded", runtimeMode: "native" as const }] : []),
   ], { companyId, enabled });
   return null;
 }
-async function render(companyId = "company-1", enabled = true, older = false) {
-  await act(async () => root.render(<LiveEventSubscriptionContext.Provider value={subscription}><Probe companyId={companyId} enabled={enabled} older={older} /></LiveEventSubscriptionContext.Provider>));
+async function render(companyId = "company-1", enabled = true, older = false, compact = false) {
+  await act(async () => root.render(<LiveEventSubscriptionContext.Provider value={subscription}><Probe companyId={companyId} enabled={enabled} older={older} compact={compact} /></LiveEventSubscriptionContext.Provider>));
 }
 async function negotiate() {
   await act(async () => {
@@ -55,6 +58,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   events.mockReset().mockResolvedValue([]);
+  conversationEvents.mockReset().mockResolvedValue([]);
   root = createRoot(document.createElement("div"));
   store = new LiveTranscriptInterests(); listeners = new Set(); sent = [];
   subscription = { companyId: "company-1", transcripts: store, subscribe(fn) { listeners.add(fn); return () => { listeners.delete(fn); }; } };
@@ -246,4 +250,41 @@ it("finishes catch-up while unrelated consumers repeatedly replace shared intere
   expect(latest.transcriptByRun.get("run-1")).toEqual(nativeRunEventsToTranscript([row(1, "uninterrupted catch-up")]));
   await act(async () => vi.advanceTimersByTimeAsync(90_000));
   expect(events).toHaveBeenCalledTimes(reads);
+});
+
+it.each([false, true])("settles compact recovery through filtered-out activity without recurring reads (signal only: %s)", async signalOnly => {
+  conversationEvents.mockResolvedValueOnce([row(2, "Saved answer")]);
+  await render("company-1", true, false, true);
+  await negotiate();
+  await act(async () => store.close());
+  conversationEvents.mockImplementation((_runId, after: number) => Promise.resolve(after < 6 ? [row(6, "Recovered answer")] : []));
+  await negotiate();
+  await act(async () => emit(10, signalOnly, "reasoning"));
+  const settledReads = conversationEvents.mock.calls.length;
+  expect(latest.transcriptByRun.get("run-1")?.filter(entry => entry.kind === "assistant").map(entry => entry.text))
+    .toEqual(["Saved answer", "Recovered answer"]);
+  await act(async () => vi.advanceTimersByTimeAsync(90_000));
+  expect(conversationEvents).toHaveBeenCalledTimes(settledReads);
+  expect(events).not.toHaveBeenCalled();
+});
+
+it("does not skip compact conversation rows committed during an older catch-up", async () => {
+  conversationEvents.mockResolvedValueOnce([row(2, "Saved answer")]);
+  await render("company-1", true, false, true);
+  await negotiate();
+  let complete!: (rows: HeartbeatRunEvent[]) => void;
+  conversationEvents.mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+  await act(async () => emit(4, true, "reasoning"));
+  const reads = conversationEvents.mock.calls.length;
+  await act(async () => emit(6, true, "reasoning"));
+  expect(conversationEvents).toHaveBeenCalledTimes(reads);
+  conversationEvents.mockImplementation((_runId, after: number) => Promise.resolve(after < 5 ? [row(5, "Answer committed during catch-up")] : []));
+  await act(async () => complete([]));
+  await act(async () => vi.advanceTimersByTimeAsync(2_000));
+  expect(conversationEvents.mock.calls.at(-1)?.slice(0, 3)).toEqual(["run-1", 4, 1_000]);
+  expect(latest.transcriptByRun.get("run-1")?.filter(entry => entry.kind === "assistant").map(entry => entry.text))
+    .toEqual(["Saved answer", "Answer committed during catch-up"]);
+  const settledReads = conversationEvents.mock.calls.length;
+  await act(async () => vi.advanceTimersByTimeAsync(90_000));
+  expect(conversationEvents).toHaveBeenCalledTimes(settledReads);
 });

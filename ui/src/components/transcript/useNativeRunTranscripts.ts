@@ -131,6 +131,7 @@ export function useNativeRunTranscripts(runs: readonly NativeRunTranscriptSource
       let failed = false;
       try {
         let cursor = cursorByRunRef.current.get(run.id) ?? 0;
+        const observedBeforeRead = sequence(run.id).observed;
         const incoming: HeartbeatRunEvent[] = [];
         for (;;) {
           const page = await readTranscriptRequest(
@@ -149,8 +150,12 @@ export function useNativeRunTranscripts(runs: readonly NativeRunTranscriptSource
         }
         // Commit this run's cursor with its rows. A slow sibling must neither
         // hold its readiness hostage nor stall live polling for this run.
-        cursorByRunRef.current.set(run.id, cursor);
-        sequence(run.id).confirm(cursor);
+        // A complete filtered scan covers matching rows through the committed
+        // sequence known before the request, including excluded activity. A
+        // notification arriving during the read still requires later catch-up.
+        const coveredCursor = run.conversationOnly ? Math.max(cursor, observedBeforeRead) : cursor;
+        cursorByRunRef.current.set(run.id, coveredCursor);
+        sequence(run.id).confirm(coveredCursor);
         failed = sequence(run.id).needsCatchup;
         if (!failed) gapPendingRef.current.delete(run.id);
         if (incoming.length > 0) setEventsByRun((previous) => {
