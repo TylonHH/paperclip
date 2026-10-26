@@ -57,6 +57,19 @@ PRP v2 command vocabulary. Incoming wire commands still undergo the negotiated
 protocol validation before execution; ordinary persisted v1 summaries remain
 compatible.
 
+## Adoption and retired launch artifacts
+
+A live runner is adopted with its admitted artifact binding and authenticated
+process identity. ACPX and OpenCode launch profiles are constructed only when a
+new runner will actually be spawned. Adoption does not read the retired
+controller's provider-pack executables, sidecar or proxy files. Fresh launches
+still require the existing artifact digests and provider-pack authority.
+
+The component regression starts the production runner and OpenCode proxy against
+a scripted harness, removes the controller's launch files, then recovers the
+same process and provider session and completes another turn. This exercises the
+real transport; it does not qualify a hosted OpenCode or ACPX deployment.
+
 ## External controller checkpoints
 
 The optional controller persistence callback stores recovery control state, not
