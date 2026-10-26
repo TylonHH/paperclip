@@ -11759,6 +11759,47 @@ describe("runnerd provider runtime wiring", () => {
     }
   });
 
+  it.each(["codex", "opencode", "claude", "pi"] as const)("adopts remote %s with no old controller launch assets", async provider => {
+    const base = scopedNativeExecution(`missing-launch-assets-${provider}`);
+    const current = { ...base,
+      provider: provider === "codex" ? base.provider : provider === "opencode"
+        ? { kind: "opencode", model: null }
+        : { kind: "acpx", agent: provider, model: null },
+      session: { ...base.session, driverKind: provider === "codex" ? "codex_app_server"
+        : provider === "opencode" ? "opencode_server" : "acpx_runtime" },
+    } as NativeExecutionInputV1;
+    const identity = { runId: current.binding.runId, normalizedSessionId: current.session.normalizedSessionId!,
+      runnerInstanceId: `admitted-${provider}`, environmentLeaseId: "admitted-lease",
+      turnId: `turn-${current.binding.runId}`, itemId: `item-${current.binding.runId}` };
+    const root = await initializeScopedRunnerRoot(current, identity.runnerInstanceId);
+    await mkdir(join(root, "control-plane"), { recursive: true });
+    await writeFile(join(root, "control-plane", "control-plane-state.json"), JSON.stringify(durableControlPlaneState(identity)));
+    const missingBinary = join(root, "absent-old-controller", "runnerd");
+    const missingPack = join(root, "absent-old-controller", "provider-pack");
+    expect(existsSync(missingBinary)).toBe(false); expect(existsSync(missingPack)).toBe(false);
+    expect(existsSync(join(root, "provider-pack-authority.json"))).toBe(false);
+    const execute = vi.fn(async (request: { args: string[] }) => ({ exitCode: 0, timedOut: false, stderr: "",
+      stdout: request.args[1]?.includes("base64") ? Buffer.from(JSON.stringify({ ...identity, lifecycle: "running" })).toString("base64")
+        : request.args[1]?.includes("cat --") ? `nonce\n123\n2026-09-19T10:00:00.000Z\n${identity.runnerInstanceId}\nlinux:abcd-1234:100\n` : "" }));
+    state.createBackend.mockClear(); state.createTransport.mockClear(); state.resolveRemoteRunnerBinary.mockClear();
+    const artifact = { version: "admitted-version", digest: `sha256:${"a".repeat(64)}` };
+    await createRunnerdBackend({ db: leaseDb(current), execution: current, runnerInstanceId: identity.runnerInstanceId,
+      runnerRemoteBinaryPath: missingBinary, runnerRemoteProviderPackPath: missingPack,
+      controllerPersistence: { bootId: "successor", runnerArtifact: artifact },
+      runnerExecutionTarget: { kind: "remote", transport: "sandbox", remoteCwd: "/workspace",
+        environmentId: "environment", leaseId: identity.environmentLeaseId, providerKey: "daytona", runner: { execute },
+        sandboxLeaseAcquisition: { outcome: "resumed", providerLeaseId: "sandbox" } } as never,
+      restartRecovery: { kind: "reattach_remote_runner", runId: current.binding.runId, leaseOwner: "controller",
+        controllerGeneration: 2, providerAttempt: 1, restartKind: "hard", recoveryRequestId: null,
+        remote: { providerLeaseId: "sandbox", remoteCwd: "/workspace" } },
+    });
+    state.createBackend.mock.calls.at(-1)![1].codexTransportFactory!();
+    expect(state.createTransport.mock.calls.at(-1)![0]).toMatchObject({ prpIdentity: identity,
+      runnerArtifact: artifact, adoptExistingRunner: { pid: 123, startedAt: "2026-09-19T10:00:00.000Z" } });
+    expect(state.resolveRemoteRunnerBinary).not.toHaveBeenCalled();
+    expect(execute.mock.calls.some(([request]) => request.args.includes("paperclip-runner-launch") || request.args.includes("--build-metadata"))).toBe(false);
+  });
+
   it.each(["verified", "wrong-state", "no-stop-proof"] as const)("admits only an authorized same-run plugin crash checkpoint: %s", async mode => {
     const current = scopedNativeExecution(`plugin-crash-${mode}`);
     const identity = { runId: current.binding.runId, normalizedSessionId: current.session.normalizedSessionId!,

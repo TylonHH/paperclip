@@ -12101,12 +12101,15 @@ async function createRunnerdBackendWithinSessionClaim(
     remoteTarget !== null &&
     (input.execution.provider.kind === "opencode" ||
       input.execution.provider.kind === "acpx");
+  const adoptingPersistedRemoteRunner = remoteTarget !== null
+    && input.restartRecovery?.kind === "reattach_remote_runner"
+    && input.controllerPersistence?.runnerArtifact !== undefined;
   const remoteClaude = remoteTarget !== null && input.execution.provider.kind === "acpx" && input.execution.provider.agent === "claude";
-  const remoteClaudeRunnerBinary = remoteClaude
+  const remoteClaudeRunnerBinary = remoteClaude && !adoptingPersistedRemoteRunner
     ? await resolveRemotePaperclipRunnerBinary({ runner: remoteCommandRunner!, remoteCwd: remoteTarget!.remoteCwd, configuredPath: input.runnerRemoteBinaryPath })
     : null;
   const remoteClaudeTarget = remoteClaudeRunnerBinary ? runnerBinaryTarget(readFileSync(remoteClaudeRunnerBinary)) : null;
-  const useBundledClaudePack = remoteClaude && !input.runnerRemoteProviderPackPath?.trim();
+  const useBundledClaudePack = remoteClaude && !adoptingPersistedRemoteRunner && !input.runnerRemoteProviderPackPath?.trim();
   if (useBundledClaudePack && remoteClaudeTarget !== "linux-x64" && remoteClaudeTarget !== "linux-arm64") {
     throw new Error("runner_remote_provider_artifact_incompatible: Claude remote provider packs require a qualified Linux target");
   }
@@ -12117,7 +12120,7 @@ async function createRunnerdBackendWithinSessionClaim(
   // Pi's explicit operator import supplies the target-platform authority. Never
   // substitute a Mac controller daemon or trust an image's self-reported hashes.
   // Existing explicit overrides and every other provider keep their old path.
-  const remotePiCompanion = await timeController("companion_selection", () => selectRemotePiCompanion({
+  const remotePiCompanion = adoptingPersistedRemoteRunner ? null : await timeController("companion_selection", () => selectRemotePiCompanion({
     provider: input.execution.provider, remote: remoteTarget !== null,
     binaryOverride: input.runnerRemoteBinaryPath, packOverride: input.runnerRemoteProviderPackPath,
     workspaceRoot: input.execution.workspace.cwd!,
@@ -12163,7 +12166,11 @@ async function createRunnerdBackendWithinSessionClaim(
   // When an explicit remote artifact is configured, prepareRemoteRunner stages
   // these exact bytes at remoteBinary before launch.
   const targetMatchedCodexArtifact = remoteTarget !== null && input.execution.provider.kind === "codex";
-  const controllerRunnerBinary = targetMatchedCodexArtifact
+  // The persisted admission owns a surviving runner's identity. Local release
+  // files are launch inputs and may no longer exist on a replacement controller.
+  const controllerRunnerBinary = adoptingPersistedRemoteRunner
+    ? input.runnerRemoteBinaryPath?.trim() || resolvePaperclipRunnerBinary()
+    : targetMatchedCodexArtifact
     ? await timeController("runner_binary", () => resolveRemotePaperclipRunnerBinary({ runner: remoteCommandRunner!, remoteCwd: remoteTarget.remoteCwd, configuredPath: input.runnerRemoteBinaryPath }))
     : remoteTarget
     ? remoteClaudeRunnerBinary || input.runnerRemoteBinaryPath?.trim() || remotePiCompanion?.runnerBinary || (useBundledRemoteImageAssets ? bundledRemoteRunnerBinary() : resolvePaperclipRunnerBinary())
@@ -12178,7 +12185,7 @@ async function createRunnerdBackendWithinSessionClaim(
     runnerArtifact: () => readRunnerdArtifactBinding(controllerRunnerBinary),
     current: resolveCurrentProviderPackManifest,
   }) : null;
-  let providerPackAuthority = selectProviderPackAuthority(reattachProviderPack);
+  let providerPackAuthority = adoptingPersistedRemoteRunner ? null : selectProviderPackAuthority(reattachProviderPack);
   let expectedProviderPackManifest = providerPackAuthority?.manifest ?? null;
   let providerPackVerified = false;
   const explicitRemoteCodex = input.runnerRemoteCodexPath?.trim() || null;

@@ -1682,6 +1682,12 @@ limits its own attempt; it must not terminate the remote owner while another
 controller is starting or classifying runs. Lease expiry still shuts down the
 provider, and exact identity, authentication, Stop and revocation checks remain
 required before any recovery or new execution.
+A remote restart claim with a persisted admitted Runner artifact can reconnect
+without the previous controller's launch binary, provider pack or local pack
+receipt. The existing sandbox marker, process identity and authenticated PRP
+checkpoint still establish the original execution. Adoption uses that admitted
+artifact identity and does not stage or launch provider assets. Fresh launches
+and recovery without persisted admission retain their release and pack checks.
 Native ACPX semantic tool calls wait on their durable PRP invocation across a
 controller outage. Their provider-side MCP bridge does not impose a separate
 request deadline that could make the provider retry an already queued write.
