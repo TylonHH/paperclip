@@ -4014,10 +4014,15 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
     this.#handler = handler;
     this.#handlerInstalled = true;
     this.#resolveHandlerReady();
-    if (this.options.recoverSemanticToolInput && this.#startupComplete) {
+    this.#recoverPendingSemanticInputsWhenReady();
+  }
+
+  #recoverPendingSemanticInputsWhenReady(): void {
+    if (this.options.recoverSemanticToolInput && this.#startupComplete && this.#handlerInstalled) {
       void Promise.resolve().then(() => this.#core?.recoverPendingSemanticInputs())
         .catch(error => this.#failTransport(error instanceof Error ? error : new Error(String(error))));
-    }  }
+    }
+  }
 
   async #awaitWarmRunAttachmentReady(): Promise<void> {
     // Remote runner ingress already has a bounded reconnect budget. Reuse the
@@ -5929,6 +5934,7 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
         ? "runnerd attached the durable provider session to a fresh PRP run authority"
         : "runnerd restored its durable PRP session and provider thread",
     );
+    this.#recoverPendingSemanticInputsWhenReady();
   }
 
   async #recoverSemanticToolInput(call: Parameters<NonNullable<DurablePrpControlPlaneOptions["onSemanticToolInput"]>>[0]) {

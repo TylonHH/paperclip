@@ -8355,6 +8355,7 @@ async function verifyLiveRunnerAdoption(
   startWithoutCheckpoint = false,
   preparedTask = false,
   adoptionAuthorization: "allow" | "deny" | "legacy" | "legacy-missing" | "missing-binding" = "allow",
+  toolHandlerOrder?: "before" | "after",
 ) {
   const stateDirectory = await mkdtemp(join(tmpdir(), "runnerd-live-adopt-"));
   const server = createServer();
@@ -8394,7 +8395,7 @@ async function verifyLiveRunnerAdoption(
   const sharedOptions = {
     runnerBinary: defaultCapabilityRunnerdBinary(),
     codexCommand: fakeCodex,
-    codexArgs: fakeCodexArgs(stateDirectory, ...(goalMidTurn ? ["--goal-autostart", "--goal-item-trigger", join(stateDirectory, "emit-goal-item")] : [])),
+    codexArgs: fakeCodexArgs(stateDirectory, ...(toolHandlerOrder ? ["--emit-tool-call"] : []), ...(goalMidTurn ? ["--goal-autostart", "--goal-item-trigger", join(stateDirectory, "emit-goal-item")] : [])),
     stateDirectory,
     prpIdentity: identity,
     lifecyclePolicy: { mode: "warm" as const, idleTimeoutMs: 60_000 },
@@ -8418,6 +8419,10 @@ async function verifyLiveRunnerAdoption(
     },
   } : {}) };
   const first = createCapabilityRunnerdCodexTransport(options);
+  const pendingTool = vi.fn(() => new Promise<Record<string, unknown>>(() => undefined));
+  if (toolHandlerOrder) first.transport.setServerRequestHandler(pendingTool);
+  const recoveredTool = vi.fn(async () => ({ result: { receipt: "known-outcome" }, isError: false }));
+  const redispatchedTool = vi.fn(async () => ({ success: true, contentItems: [] }));
   let runnerPid: number | null = null;
   let runnerStartedAt: string | null = null;
   let adopted: ReturnType<typeof createCapabilityRunnerdCodexTransport> | null =
@@ -8427,7 +8432,7 @@ async function verifyLiveRunnerAdoption(
     try {
       opened = await first.transport.request("thread/start", {
         cwd: tmpdir(),
-        dynamicTools: codexSemanticToolSpecs(),
+        dynamicTools: toolHandlerOrder ? [{ name: "get_task_context", description: "Read current task", inputSchema: { type: "object", properties: {}, additionalProperties: false } }] : codexSemanticToolSpecs(),
       });
     } catch (error) {
       const stderr = await readFile(
@@ -8449,6 +8454,10 @@ async function verifyLiveRunnerAdoption(
       }
     }
 
+    if (toolHandlerOrder) {
+      await first.transport.request("turn/start", { input: [{ type: "text", text: "Read current task" }] });
+      await vi.waitFor(() => expect(pendingTool).toHaveBeenCalledOnce(), { timeout: 5_000 });
+    }
     await first.detachControllerForRestart();
     expect(() => process.kill(runnerPid!, 0)).not.toThrow();
     if (goalMidTurn) {
@@ -8515,7 +8524,8 @@ async function verifyLiveRunnerAdoption(
             runnerReconnectGraceMs: 150,
           }
         : {}),
-      resumeDynamicTools: [],
+      ...(toolHandlerOrder ? { recoverSemanticToolInput: recoveredTool } : {}),
+      resumeDynamicTools: toolHandlerOrder ? [{ name: "get_task_context", description: "Read current task", inputSchema: { type: "object", properties: {}, additionalProperties: false } }] : [],
       resumeProviderSession: startWithoutCheckpoint ? undefined : {
         driverSessionId: String(openedThread.id),
         providerSessionId: mismatchedCheckpoint
@@ -8594,11 +8604,21 @@ async function verifyLiveRunnerAdoption(
       expect(() => process.kill(runnerPid!, 0)).not.toThrow();
       return;
     }
+    if (toolHandlerOrder === "before") adopted.transport.setServerRequestHandler(redispatchedTool);
     await expect(adopted.transport.request(startWithoutCheckpoint ? "thread/start" : "thread/read", {})).resolves.toEqual(
       expect.objectContaining({
         thread: expect.objectContaining({ id: "codex-thread-1" }),
       }),
     );
+    if (toolHandlerOrder === "after") adopted.transport.setServerRequestHandler(redispatchedTool);
+    if (toolHandlerOrder) {
+      await vi.waitFor(() => {
+        expect(recoveredTool).toHaveBeenCalledOnce();
+        const result = authority!.store.state.commands.find(command => command.type === "semantic_tool.result");
+        expect(result?.status).toBe("completed");
+      }, { timeout: 5_000 });
+      expect(redispatchedTool).not.toHaveBeenCalled();
+    }
     expect(adopted.evidence().runnerPid).toBe(runnerPid);
     expect(adopted.transport.processInfo().startedAt).toBe(runnerStartedAt);
     if (startWithoutCheckpoint) {
@@ -9251,3 +9271,7 @@ it("launches and closes native Codex without materializing or editing the precon
     await rm(root, { force: true, recursive: true });
   }
 }, 30_000);
+
+
+it.each(["before", "after"] as const)("settles a saved tool outcome with the handler installed %s recovery startup", order =>
+  verifyLiveRunnerAdoption(false, false, false, false, false, false, "allow", order), 30_000);
