@@ -813,3 +813,65 @@ viewer matrix remain open. The current Cloud campaign path still requests task
 drain before replacement. These app-only fault results do not qualify a normal
 Cloud rollout without drain. Keep deployment-policy work with its Cloud owner;
 do not weaken Core drain semantics or report active work as empty.
+
+### Reviewed full-stack campaign and asynchronous identity failure (2026-10-26)
+
+The maintained Cloud CLI deployed exact Core-only artifact
+`f2945ebeafdffb26fd6234092aeec0c6ff6208ea` to the same dedicated synthetic
+Linux/Postgres/Daytona tenant. Publication, rollout and serving health verified
+the revision. The approved profile remained production Runner/native Codex with
+OpenAI `gpt-5.4-mini`, local tools through the authenticated capped gateway, and
+hosted web search removed.
+
+Ten ordinary assigned tasks each completed 600 deterministic steps and streamed
+4 KiB per step. The main Node process was frozen for 300 seconds and killed.
+Postgres and Daytona stayed running; no lease deadline was edited. HTTP readiness
+was observed by 311.735 seconds. Natural ownership was acquired at
+315.999–316.434 seconds. All ten original runners authenticated again and new
+canonical ingestion was observed by 378.466 seconds, inside the unchanged
+420-second grace. A fresh ordinary task started in 0.964 seconds while all ten
+originals were still active, and succeeded.
+
+Each original workload made 295–300 useful steps during the outage. Its PID,
+boot/start-tick identity and nonce stayed unchanged; the largest step gap across
+all workloads was 1.792 seconds. Independent recomputation verified all ten hash
+chains and exclusive effect files. Every original run retained its runner,
+session, PID and sandbox lease, preserved its canonical event prefix, finalized
+once and committed its workspace export. No queued recovery remained.
+
+**Strict qualification remains failed: 0/10.** Every `processStartedAt` moved
+forward by 3.040–7.354 seconds to an initial-launch timestamp before the outage.
+The prior fix removed replacement-construction time but did not preserve the
+asynchronous process owner's getter through `spawnRunner`'s restart wrapper.
+Object spread captured undefined before the remote marker arrived. A regression
+through this public wrapper fails before the getter-forwarding correction and
+passes after; all 143 control-plane tests pass. The correction belongs to PR 1.
+This campaign does not qualify that later source. Both failed hosted grades
+remain unchanged and inspectable.
+
+Two successful independent frozen-server observations, 69.332 seconds apart,
+show identical insert/update/delete counters for `heartbeat_run_events`,
+`heartbeat_runs`, `native_run_finalizations` and `native_runner_checkpoints`,
+while each workload advanced by about 68 steps. Checkpoint material stayed at
+9,688,877 bytes over 1,607 retained rows, including earlier campaign history.
+This is neither a healthy-streaming SQL benchmark nor a zero-read claim.
+
+The rerun settled 165 model requests at **$0.595740300 estimated** with no held,
+unknown, conflicting or inflight charges. Combined campaign cost is
+**$1.330986150 estimated**, below the approved $25 maximum. All eleven synthetic
+agents are paused, the model gateway is closed, and the requested CLI access is
+retained. Estimates use reported provider usage and documented model rates;
+they are not invoices.
+
+Preserved setup failures include an unselected local AWS profile (resolved with
+the existing development profile), one normal AI connection probe rejection
+followed by a passing diagnostic and scoped binding retry, and one Railway SSH
+connection timeout. Later observer connections use a short connection timeout
+without changing authentication or host verification. An early incomplete
+pre-fault observation remains separate; the actual fault required all ten
+complete active boundaries and fresh workload readiness. None of these retries
+replaced a workload or edited lease timing.
+
+Different-artifact active upgrade/rollback, normal Cloud drain-free rollout,
+Claude, 25-way load and the full viewer/CPU/memory cost matrix remain open. The
+current Cloud campaign still requests task drain. PR 3 remains draft.
