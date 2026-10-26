@@ -396,6 +396,17 @@ export class PaperclipRunnerToolAuthority {
     const context = await this.#boundContext();
     const { run } = context;
     if (RECOVERABLE_READ_OPERATIONS.has(call.tool)) return this.#recoverRead(call);
+    if (call.tool === "update_case" || call.tool === "create_workflow" || call.tool === "update_workflow") {
+      const callApi = (receiptKey: string, request: RunnerApiCall) => this.#callApi(receiptKey, request, {
+        dedicatedCaseTool: call.tool, caseId: request.pathParams?.id, receiptOnly: true,
+      });
+      const result = call.tool === "update_case"
+        ? await executeNativeCaseTool({ db: this.db, binding: this.binding, actor: this.#privacyActor(run),
+            tool: call.tool, arguments: call.arguments, callApi })
+        : await executeNativeWorkflowTool({ db: this.db, binding: this.binding,
+            tool: call.tool, arguments: call.arguments, callApi });
+      return result === undefined ? null : { result };
+    }
     const input = record(call.arguments);
     if (call.tool === "update_agent_instructions" || call.tool === "restore_agent_instructions") {
       const receipt = record(record(run.resultJson?.semanticToolReceipts)[`instruction:${call.callId}`]);
@@ -428,10 +439,8 @@ export class PaperclipRunnerToolAuthority {
       }
       const { input: apiInput, operation } = validated;
       if (readOnlyApiMethod(operation.method)) return this.#recoverRead(call);
-      const api = record(record(run.resultJson?.apiToolReceipts)[callKey]);
-      if (api.state !== "completed" || api.digest !== toolInputDigest(apiInput)) return null;
-      const result = await this.#apiReceiptResult(api);
-      if (result === undefined || record(result).outcome === "unknown") return null;
+      const result = await this.#completedApiReceipt(run.resultJson?.apiToolReceipts, call.callId, apiInput);
+      if (result === undefined) return null;
       return { result: call.tool === "hire_agent" ? hireAgentResult(result, context.actor.adapterConfig?.provider) : apiToolResult(result) };
     }
     if (call.tool === "workspace_write" || call.tool === "workspace_run") {
@@ -457,6 +466,13 @@ export class PaperclipRunnerToolAuthority {
         success: false, contentItems: [{ type: "inputText", text: error.message }],
       } };
     }
+  }
+
+  async #completedApiReceipt(receipts: unknown, callId: string, input: RunnerApiCall): Promise<unknown> {
+    const receipt = record(record(receipts)[toolCallKey(callId)]);
+    if (receipt.state !== "completed" || receipt.digest !== toolInputDigest(input)) return undefined;
+    const result = await this.#apiReceiptResult(receipt);
+    return record(result).outcome === "unknown" ? undefined : result;
   }
 
   async #apiReceiptResult(receipt: { encryptedResult?: unknown; result?: unknown }): Promise<unknown> {
@@ -961,7 +977,7 @@ export class PaperclipRunnerToolAuthority {
       this.binding.runId, context.run.responsibleUserId, this.#apiScope(context), this.binding.externalAuthorizingUserId);
   }
 
-  async #callApi(callId: string, value: unknown, options?: { dedicatedCaseTool: string; caseId?: string }): Promise<unknown> {
+  async #callApi(callId: string, value: unknown, options?: { dedicatedCaseTool: string; caseId?: string; receiptOnly?: true }): Promise<unknown> {
     const bound = await this.#boundContext();
     const context = { ...this.binding, issueIdentifier: bound.issue.identifier, workMode: bound.issue.workMode };
     const { input, operation } = validateRunnerApiCall(value, context);
@@ -982,6 +998,10 @@ export class PaperclipRunnerToolAuthority {
     if (this.binding.firstPartyOnly && /\/(?:workspaces|workspace-runtime|repositories|tool-gateway|tool-connections|tool-profiles|tools|connection-intents|connections|plugins)(?:\/|$)/.test(operation.path)) throw forbidden("Third-party tools through Paperclip are unavailable for this Grok Bot connection.");
     const sensitiveResponse = runnerApiSensitiveResponse(operation.method, operation.path);
     await this.#assertDotApiFileAccess(operation.path, input);
+    if (options?.receiptOnly) {
+      assertAvailable(bound.issue.workMode);
+      return this.#completedApiReceipt(bound.run.resultJson?.apiToolReceipts, callId, input);
+    }
     const apiUrl = this.binding.apiUrl ?? process.env.PAPERCLIP_API_URL;
     if (!apiUrl) throw new Error("Paperclip API origin is unavailable");
     const token = this.#apiToken(bound);
