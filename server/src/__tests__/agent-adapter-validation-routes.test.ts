@@ -746,7 +746,7 @@ describe("agent routes adapter validation", () => {
       const app = await createApp();
       const res = await requestApp(app, baseUrl => request(baseUrl)
         .post("/api/companies/company-1/adapters/paperclip_runner/test-environment")
-        .send({ agentId: "11111111-1111-4111-8111-111111111111", adapterConfig: { provider: "acpx", acpxAgent: "grok" } }));
+        .send({ agentId: "11111111-1111-4111-8111-111111111111", adapterConfig: { provider: "acpx", acpxAgent: "cursor" } }));
       expect(res.status, JSON.stringify(res.body)).toBe(422);
       expect(res.body.details).toMatchObject({ code: "paperclip_runner_rollout_disabled" });
       expect(probe).not.toHaveBeenCalled();
@@ -875,7 +875,7 @@ describe("agent routes adapter validation", () => {
 
   it("keeps other native provider selection behind its existing flag", async () => {
     const app = await createApp();
-    const response = await requestApp(app, baseUrl => request(baseUrl).post("/api/companies/company-1/agents").send({ name: "Native Grok", adapterType: "paperclip_runner", adapterConfig: { provider: "acpx", acpxAgent: "grok", model: "openrouter/deepseek/deepseek-v4-flash-0731" } }));
+    const response = await requestApp(app, baseUrl => request(baseUrl).post("/api/companies/company-1/agents").send({ name: "Native Cursor", adapterType: "paperclip_runner", adapterConfig: { provider: "acpx", acpxAgent: "cursor", model: "provider-model" } }));
     expect(response.status).toBe(422);
     expect(response.body.details).toMatchObject({ code: "paperclip_runner_rollout_disabled" });
   });
@@ -1019,6 +1019,30 @@ describe("agent routes adapter validation", () => {
       .send({ adapterConfig: { provider: "codex" }, replaceAdapterConfig: true }));
     expect(response.status, JSON.stringify(response.body)).toBe(200);
     expect(mockAgentService.update.mock.calls.at(-1)?.[1]).toMatchObject({ adapterConfig: { provider: "codex" } });
+  });
+
+  it.each([{ maxTurns: 5 }, { disableWebSearch: true }])("rejects a direct Grok conversion with incompatible saved settings %j", async unsupported => {
+    const existing = await mockAgentService.getById();
+    mockAgentService.getById.mockResolvedValue({ ...existing, adapterType: "grok_local",
+      adapterConfig: { model: "grok-4.7", reasoningEffort: "high", ...unsupported } });
+    const app = await createApp();
+    const res = await requestApp(app, baseUrl => request(baseUrl).patch(`/api/agents/${existing.id}`)
+      .send({ adapterType: "paperclip_runner" }));
+    expect(res.status, JSON.stringify(res.body)).toBe(422);
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+  });
+
+  it("translates compatible settings during a direct Grok conversion", async () => {
+    const existing = await mockAgentService.getById();
+    mockAgentService.getById.mockResolvedValue({ ...existing, adapterType: "grok_local",
+      adapterConfig: { model: "grok-4.7", reasoningEffort: "high", command: "grok" } });
+    const app = await createApp();
+    const res = await requestApp(app, baseUrl => request(baseUrl).patch(`/api/agents/${existing.id}`)
+      .send({ adapterType: "paperclip_runner" }));
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const saved = mockAgentService.update.mock.calls.at(-1)?.[1];
+    expect(saved).toMatchObject({ adapterType: "paperclip_runner", adapterConfig: { provider: "acpx", acpxAgent: "grok", model: "grok-4.7", reasoningEffort: "high" } });
+    expect(saved.adapterConfig).not.toHaveProperty("command");
   });
 
   it.each(["codex_local", "claude_local"])("upgrades an existing %s through runner selection with its saved settings", async adapterType => {

@@ -494,6 +494,12 @@ describe("Grok runner migration", () => {
     expect(() => resolveNewAgentRunner({ ...selected, runner: "legacy", target,
       adapterConfig: { ...selected.adapterConfig, acpxPermissionMode: "deny-all" } })).toThrow("cannot honor");
   });
+  it.each(["modelReasoningEffort", "effort"])("preserves native %s when switching to Legacy", key => {
+    const saved = { adapterType: "paperclip_runner", adapterConfig: { provider: "acpx", acpxAgent: "grok", model: "grok-4.7", [key]: "high" } };
+    expect(resolveNewAgentRunner({ ...saved, runner: "legacy", target })).toEqual({
+      adapterType: "grok_local", adapterConfig: { model: "grok-4.7", reasoningEffort: "high" },
+    });
+  });
   it.each([{ command: "custom-grok" }, { extraArgs: ["--unsafe"] }, { permissionMode: "dontAsk" }, { alwaysApprove: false }, { maxTurns: 5 }])("rejects incompatible settings %j without mutating them", adapterConfig => {
     const before = structuredClone(adapterConfig);
     expect(() => resolveNewAgentRunner({ adapterType: "grok_local", runner: "paperclip", adapterConfig, target })).toThrow("cannot honor");

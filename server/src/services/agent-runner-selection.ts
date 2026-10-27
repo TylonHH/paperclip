@@ -179,8 +179,9 @@ function resolveAgentRunner(input: AgentRunnerSelection): { adapterType: string;
       if (!native) return { adapterType, adapterConfig: config };
       if (config.acpxPermissionMode !== undefined && config.acpxPermissionMode !== "approve-all") incompatible(["acpxPermissionMode"]);
       if (config.lifecycleMode !== undefined && config.lifecycleMode !== "per_turn") incompatible(["lifecycleMode"]);
-      for (const key of ["provider", "acpxAgent", "acpxPermissionMode", "lifecycleMode", "idleTimeoutMs"]) delete config[key];
-      return { adapterType: "grok_local", adapterConfig: config };
+      const effort = config.modelReasoningEffort ?? config.reasoningEffort ?? config.effort;
+      for (const key of ["provider", "acpxAgent", "acpxPermissionMode", "lifecycleMode", "idleTimeoutMs", "modelReasoningEffort", "effort"]) delete config[key];
+      return { adapterType: "grok_local", adapterConfig: { ...config, ...(effort === undefined ? {} : { reasoningEffort: effort }) } };
     }
     if (harness === "pi_local") {
       if (!native) return { adapterType, adapterConfig: config };
