@@ -1158,3 +1158,23 @@ regressions fail first; all 28 affected history/visibility tests and UI token
 gates pass. CI attempts on the preceding heads also lose several runner services
 at the same timestamp; those shutdown/cancellation logs remain in the evidence
 and are not reported as assertion failures or passing jobs.
+
+The shared outage selector subsequently reproduces a dedicated-suite regression:
+it excludes `daytona-restart-continuity`, suppressing its strict original-process
+checks. The everyday default also requests one second despite its catalog's
+125-second declaration. Both suites now derive that default from catalog
+metadata; the dedicated suite rejects a shorter override. Explicit short
+everyday experiments remain available with their actual duration recorded. The
+catalog definition advances to version 10. Both new policy cases fail first;
+all 149 relevant qualification tests and the runner E2E typecheck pass.
+
+A broader catalog invocation additionally finds existing model-account coverage
+drift already present in master `663fe667d6`, and a sandbox-denied report CLI
+fixture. Those failures remain in the evidence; the permitted report-catalog
+retry passes all 15 cases. They do not alter the continuity acceptance contract.
+
+Transcript rows now use their run/sequence identity in both Agent Detail
+variants. Two regressions first reproduce collisions between database IDs and
+synthetic live IDs, then pass without duplicate keys or missing rows. All 30
+history/visibility cases pass. This is a presentation fix and changes neither
+canonical logs nor checkpoint writes.

@@ -32,17 +32,23 @@ export function parseControllerOutage(value: unknown): ControllerOutage {
   return { signal, holdMs: Number(holdMs) };
 }
 
-export function configuredControllerOutage(env: NodeJS.ProcessEnv): ControllerOutage {
-  const raw = env.PAPERCLIP_RUNNER_E2E_CONTROLLER_OUTAGE_MS ?? "1000";
+export function configuredControllerOutage(env: NodeJS.ProcessEnv, defaultHoldMs = 1_000): ControllerOutage {
+  const raw = env.PAPERCLIP_RUNNER_E2E_CONTROLLER_OUTAGE_MS ?? String(defaultHoldMs);
   if (!/^\d+$/.test(raw)) throw new Error("Invalid PAPERCLIP_RUNNER_E2E_CONTROLLER_OUTAGE_MS");
   return parseControllerOutage({ signal: env.PAPERCLIP_RUNNER_E2E_CONTROLLER_STOP_SIGNAL ?? "SIGKILL", holdMs: Number(raw) });
 }
 
 export function controllerOutageForExecution(execution: MatrixExecution, env: NodeJS.ProcessEnv): ControllerOutage | undefined {
-  return execution.suite.id === "everyday-workflows" && execution.task.id === "recover-controller"
-    && execution.environment.id === "daytona" && execution.profile.generation === "native"
-    && (execution.profile.provider === "codex" || execution.profile.provider === "acpx")
-    ? configuredControllerOutage(env) : undefined;
+  if (execution.task.flow !== "everyday_workflow" || execution.task.id !== "recover-controller"
+    || execution.environment.id !== "daytona" || execution.profile.generation !== "native"
+    || (execution.profile.provider !== "codex" && execution.profile.provider !== "acpx")) return undefined;
+  const declaredHoldMs = execution.suite.definitionMetadata?.controllerDowntimeMs;
+  if (typeof declaredHoldMs !== "number") throw new Error("Controller recovery suite must declare its outage duration");
+  const outage = configuredControllerOutage(env, declaredHoldMs);
+  if (execution.suite.id === "daytona-restart-continuity" && outage.holdMs < declaredHoldMs) {
+    throw new Error("Controller outage is shorter than the dedicated continuity contract");
+  }
+  return outage;
 }
 
 /** A fault receipt is required in addition to the runner's continuity receipts. */
