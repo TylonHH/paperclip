@@ -174,9 +174,14 @@ export function useLiveRunTranscripts({
     trimmedSeqFloorByRunRef.current.delete(runId); sequencesRef.current.delete(runId);
     for (const key of seenChunkKeysRef.current) if (key.includes(`:${runId}:`)) seenChunkKeysRef.current.delete(key);
     setChunksByRun(previous => new Map(previous).set(runId, []));
+    setTruncatedRunIds(previous => {
+      if (!previous.has(runId)) return previous;
+      const next = new Set(previous); next.delete(runId); return next;
+    });
     return "changed";
   };
 
+  const [truncatedRunIds, setTruncatedRunIds] = useState<ReadonlySet<string>>(new Set());
   const missingTerminalLogRunIdsRef = useRef(new Set<string>());
   // PAP-462 B3: buffered runs that dropped out of the `runs` list, mapped to the
   // wall-clock deadline (ms) after which their buffer may be pruned. A run still
@@ -299,6 +304,10 @@ export function useLiveRunTranscripts({
 
     setErrorsByRun((previous) => {
       const next = new Map([...previous].filter(([id]) => retainedRunIds.has(id)));
+      return next.size === previous.size ? previous : next;
+    });
+    setTruncatedRunIds((previous) => {
+      const next = new Set([...previous].filter((id) => retainedRunIds.has(id)));
       return next.size === previous.size ? previous : next;
     });
 
@@ -449,6 +458,15 @@ export function useLiveRunTranscripts({
           const binding = bindLog(run.id, result.store, result.logRef);
           if (binding === "stale") { failed = true; return; }
           if (binding === "changed" && offset !== 0) { offset = 0; continue; }
+          if (previousReadLimit === undefined || rewinding || binding === "changed") {
+            setTruncatedRunIds(previous => {
+              if (previous.has(run.id) === (offset > 0)) return previous;
+              const next = new Set(previous);
+              if (offset > 0) next.add(run.id);
+              else next.delete(run.id);
+              return next;
+            });
+          }
           logReadLimitByRunRef.current.set(run.id, logReadLimitBytes);
           if (rewinding) {
             pendingLogRowsByRunRef.current.delete(run.id);
@@ -585,7 +603,7 @@ export function useLiveRunTranscripts({
 
   return {
     transcriptByRun,
-    hydratedRunIds, errorsByRun, retry,
+    hydratedRunIds, truncatedRunIds, errorsByRun, retry,
     isInitialHydrating: normalizedRuns.some((run) => canReadPersistedLog(run) && !hydratedRunIds.has(run.id)),
     hasOutputForRun(runId: string) {
       return (chunksByRun.get(runId)?.length ?? 0) > 0 || runById.get(runId)?.hasStoredOutput === true;

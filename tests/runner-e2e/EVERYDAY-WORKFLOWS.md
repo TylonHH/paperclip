@@ -354,4 +354,3 @@ For a credential-free startup/migration experiment, run
 database; it does not change the supplied database. This smoke qualifies zero
 agent turns. The [qualification record](../../doc/plans/2026-10-22-hot-upgrade-qualification.md)
 is the acceptance ledger for exact artifacts, attempts, and remaining gates.
-
