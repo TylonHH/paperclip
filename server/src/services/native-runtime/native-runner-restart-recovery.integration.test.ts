@@ -833,7 +833,7 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
     const options = transportOptions(fixture, root);
     const binding = { companyId, issueId: fixture.issueId, runId: fixture.runId };
     const writerDb = createDb(temporary.connectionString, { maxConnections: 1 });
-    const [backend] = await writerDb.execute(sql`select pg_backend_pid() as pid`);
+    const [backend] = await checkpointDb(writerDb).execute(sql`select pg_backend_pid() as pid`);
     const authority = new DurablePrpControlPlane({ stateDirectory: resolve(root, "control-plane"),
       identity: options.prpIdentity, expectedRunnerVersion: "lock-test", expectedRunnerDigest: `sha256:${"a".repeat(64)}` });
     let unlock: (() => void) | undefined;
@@ -869,7 +869,7 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
       expect((await loadNativeRunnerCheckpoint(fixture.db, binding))?.records).toEqual(saved?.records);
     } finally {
       unlock?.(); await holder;
-      await authority.stop(); await writerDb.$client.end();
+      await authority.stop(); await closeCheckpointDb(writerDb, 1); await writerDb.$client.end();
     }
   });
 
