@@ -78,6 +78,14 @@ coalesced into the next control checkpoint. Authentication, command intents and
 outcomes, semantic inputs, lifecycle and result events retain commit barriers.
 Priority-zero and unknown event kinds are never treated as disposable output.
 
+Installing the callback makes it the controller's durable authority. The local
+state file is replaced once with a fail-closed marker; ordinary control changes
+no longer rewrite or fsync a second local journal. The controller can continue
+if that directory disappears. A new controller must restore the committed
+external checkpoint before opening the directory; the marker cannot recover
+an execution or authorize a new one. This does not change the sandbox runner's
+journal or controllers without an external persistence callback.
+
 Fresh semantic inputs reserve their original live callback before awaiting the
 checkpoint barrier. Recovery cannot steal first dispatch when no saved outcome
 exists. The reservation is released if persistence or admission fails; business
@@ -241,6 +249,30 @@ ACK:
 The ACK means that every source event through sequence 9 is committed or
 deduplicated. The runner rejects an ACK that moves backward or beyond its
 produced source cursor. It removes only events at or below a valid ACK.
+
+The controller stages routine priority 1 and 2 event snapshots with asynchronous
+file writes and file fsyncs. Those operations let unrelated HTTP requests run
+while the volume is slow. Rename and directory fsync remain synchronous. The
+candidate snapshot stays private until its atomic replacement
+and directory flush finish. Lifecycle readers and replacement connections see
+only the committed cursor. The controller acknowledges the event after that commit.
+A command that saves during staging includes the pending event in its own
+durable write. Further commands do not add event deliveries or cause another
+staged write. Other authority changes leave an uncommitted event available for
+replay instead of repeatedly rewriting the snapshot. A replaced
+connection cannot publish its old candidate. Its unacknowledged event remains
+available for replay. A failed write fences further authority until reload.
+Priority 0 events, all `run.*` and `turn.*` lifecycle events, commands,
+authentication, and semantic tool input retain synchronous persistence. The
+lifecycle rule also covers producers that label a terminal event priority 1.
+A terminal suffix remains in the same
+control-loop turn. Semantic tool admission and dispatch cannot yield to a
+replacement connection between those operations.
+Controller replacement must still stop ingress and drain admitted processing
+before a successor reuses the journal. External control routes stop their
+reconnect loop before the controller joins admitted work. An incomplete drain
+cannot certify a reusable checkpoint. Snapshots use compact JSON; existing
+indented snapshots remain readable.
 
 For the lost-ACK fault, the mock commits an event, drops the ACK and socket, and
 reports the prior cursor once after reconnect. The runner sends the same bytes
