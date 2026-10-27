@@ -1,5 +1,5 @@
 import { and, eq, exists, gt, isNull, lte, inArray, or, sql } from "drizzle-orm";
-import { heartbeatRuns, issues, nativeRunFinalizations, nativeRunnerCheckpoints, type Db } from "@paperclipai/db";
+import { checkpointDb, heartbeatRuns, issues, nativeRunFinalizations, nativeRunnerCheckpoints, type Db } from "@paperclipai/db";
 import { decodeDurablePrpCheckpoint, type DurablePrpCheckpoint, type DurablePrpControlPlane } from "../../vendor/paperclip-runner/index.js";
 import { localEncryptedProvider } from "../../secrets/local-encrypted-provider.js";
 
@@ -19,13 +19,14 @@ async function decryptPart(binding: Binding, part: string, material: Record<stri
 }
 
 export function nativeRunnerCheckpointWriter(db: Db, owner: Owner) {
+  const persistenceDb = checkpointDb(db);
   let previousWork = new Set<string>();
   return async (checkpoint: DurablePrpCheckpoint): Promise<void> => {
     if (checkpoint.runId !== owner.runId) throw new Error("native_runner_checkpoint_binding_mismatch");
     const changed = await Promise.all([...checkpoint.changedRecords]
       .map(async ([part, value]) => ({ companyId: owner.companyId, issueId: owner.issueId,
         runId: owner.runId, part, material: await encryptPart(owner, part, value) })));
-    await db.transaction(async tx => {
+    await persistenceDb.transaction(async tx => {
       // A locking CTE acquires ownership before the outer projection samples
       // wall time. Sampling in the locking SELECT can precede its lock wait.
       // Keep both steps in one statement without another database round trip.

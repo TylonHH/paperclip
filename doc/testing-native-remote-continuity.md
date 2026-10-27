@@ -120,6 +120,19 @@ writes; local-only controllers retain their full file journal. Existing applicat
 event/log callbacks remain; this does not remove accounting or business writes.
 Unknown event kinds retain the conservative persist-before-ack behavior.
 
+Externally persisted controllers use Postgres as their durable store. Their
+local file becomes a marker that requires restoration from the external
+checkpoint before restart. Ordinary control changes do not rewrite a second
+local journal. The sandbox runner keeps its own journal.
+
+Checkpoint transactions share a separate pool capped at two connections per
+server database client. They queue without occupying the application pool or
+the existing lease-renewal pool. This can delay a control acknowledgement during
+a burst; it does not release that acknowledgement before its commit. The cost is
+up to two additional active database connections per instance, not per agent.
+There is no new SQL per text chunk or while idle, and the number of control
+transactions is unchanged. SQL cost collection must include the checkpoint pool.
+
 A sparse checkpoint is marked `checkpointEventPolicy: "control-v1"`. Its peer must
 advertise `recoveryCursorVersion: 1`. During reconnection the controller echoes the
 runner's durable `resume.ackedSourceSeq` as `recoveryAckedSourceSeq` in the signed

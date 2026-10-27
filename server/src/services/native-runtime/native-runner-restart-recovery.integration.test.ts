@@ -12,7 +12,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   agents,
   authUsers,
@@ -23,6 +23,8 @@ import {
   environments,
   createDb,
   closeLivenessDb,
+  checkpointDb,
+  closeCheckpointDb,
   livenessDb,
   heartbeatRuns,
   heartbeatRunEvents,
@@ -871,6 +873,84 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
     }
   });
 
+  it("keeps requests and liveness queries moving through a bounded checkpoint backlog", async () => {
+    const fixtures = await Promise.all([0, 1, 2].map(index => seedRun(`CHECKPOINT-POOL-${index}`)));
+    const owner = createDb(temporary.connectionString, { maxConnections: 1, applicationName: "checkpoint-pool-fixture" });
+    const authorities: DurablePrpControlPlane[] = [];
+    const pending: Promise<void>[] = [];
+    let release = () => {};
+    let locked: Promise<unknown> | undefined;
+    try {
+      for (const fixture of fixtures) {
+        await fixture.db.update(nativeRunFinalizations).set({ controllerBootId: successor.bootId,
+          controllerGeneration: 1, leaseOwner: "checkpoint-pool-owner", leaseExpiresAt: new Date(Date.now() + 60_000),
+        }).where(eq(nativeRunFinalizations.runId, fixture.runId));
+        const root = resolve(runtimeRoot, fixture.runId);
+        const authority = new DurablePrpControlPlane({ stateDirectory: resolve(root, "control-plane"),
+          identity: transportOptions(fixture, root).prpIdentity,
+          expectedRunnerVersion: "checkpoint-pool-fixture", expectedRunnerDigest: `sha256:${"a".repeat(64)}` });
+        authorities.push(authority);
+        await registerNativeRunnerCheckpoint({ db: owner, binding: { companyId, issueId: fixture.issueId, runId: fixture.runId },
+          bootId: successor.bootId, authority });
+      }
+      let entered!: () => void;
+      const acquired = new Promise<void>(resolveReady => { entered = resolveReady; });
+      const held = new Promise<void>(resolveRelease => { release = resolveRelease; });
+      locked = fixtures[0].db.transaction(async tx => {
+        await tx.select().from(nativeRunFinalizations)
+          .where(inArray(nativeRunFinalizations.runId, fixtures.slice(0, 2).map(fixture => fixture.runId))).for("update");
+        entered(); await held;
+      });
+      await acquired;
+      authorities.forEach((authority, index) => {
+        authority.queueCommand("session.snapshot", {}, `pool-command-${index}`);
+        const writing = authority.flushCheckpoint();
+        void writing.catch(() => undefined); // The assertions and cleanup await the original promise below.
+        pending.push(writing);
+      });
+      await vi.waitFor(async () => {
+        const [blocked] = await fixtures[0].db.execute(sql`select count(*)::int as count from pg_stat_activity
+          where datname = current_database() and wait_event_type = 'Lock'
+            and application_name in ('paperclip-runner-checkpoint', 'checkpoint-pool-fixture')`);
+        expect(Number(blocked.count)).toBeGreaterThan(0);
+      });
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const responses = await Promise.race([
+          Promise.all([owner.execute(sql`select 1 as ok`), livenessDb(owner).execute(sql`select 1 as ok`)]),
+          new Promise<never>((_resolve, reject) => { deadline = setTimeout(() => reject(new Error("requests_and_liveness_starved_by_checkpoint_backlog")), 2_000); }),
+        ]);
+        expect(responses.map(rows => rows[0])).toEqual([{ ok: 1 }, { ok: 1 }]);
+      } finally { clearTimeout(deadline); }
+      const [connections] = await fixtures[0].db.execute(sql`select count(*)::int as count from pg_stat_activity
+        where datname = current_database() and application_name = 'paperclip-runner-checkpoint'
+          and pid in (select pid from pg_locks where not granted)`);
+      expect(Number(connections.count)).toBe(2);
+      release(); await locked;
+      await Promise.all(pending);
+      for (const [index, fixture] of fixtures.entries()) {
+        const checkpoint = await loadNativeRunnerCheckpoint(owner, { companyId, issueId: fixture.issueId, runId: fixture.runId });
+        const root = resolve(runtimeRoot, fixture.runId, "restored-pool-checkpoint");
+        checkpoint!.restoreSessionDirectory(root);
+        const restored = new DurablePrpControlPlane({ stateDirectory: resolve(root, "control-plane"),
+          identity: transportOptions(fixture, root).prpIdentity,
+          expectedRunnerVersion: "checkpoint-pool-fixture", expectedRunnerDigest: `sha256:${"a".repeat(64)}` });
+        expect(restored.getCommand(`pool-command-${index}`)).toMatchObject({ type: "session.snapshot" });
+        await restored.stop();
+      }
+      await closeCheckpointDb(owner, 1);
+      authorities[0].queueCommand("session.snapshot", {}, "late-closed-pool-command");
+      await expect(authorities[0].flushCheckpoint()).rejects.toThrow();
+      expect((await owner.execute(sql`select 1 as ok`))[0]).toEqual({ ok: 1 });
+    } finally {
+      release(); await locked;
+      await Promise.allSettled(pending);
+      await Promise.allSettled(authorities.map(authority => authority.stop()));
+      await closeCheckpointDb(owner, 1); await closeLivenessDb(owner, 1);
+      await owner.$client.end({ timeout: 1 });
+    }
+  }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
+
   it("retains remote ownership through two delayed successful liveness-pool renewals", async () => {
     const fixture = await seedRun("DELAYED-RENEWAL-SUCCESS");
     const owner = createDb(temporary.connectionString);
@@ -1225,9 +1305,12 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
       let measuring = false;
       let transactions = 0, changedRows = 0, checkpointBytes = 0;
       const statements: string[] = [];
-      const priorDebug = fixture.db.$client.options.debug;
+      const capturedClients = [fixture.db.$client, checkpointDb(fixture.db).$client];
+      const priorDebug = capturedClients.map(client => client.options.debug);
       // Capture statements only, never SQL parameters (encrypted state or secrets).
-      fixture.db.$client.options.debug = (_connection, query) => { if (measuring) statements.push(query); };
+      for (const client of capturedClients) {
+        client.options.debug = (_connection, query) => { if (measuring) statements.push(query); };
+      }
       const write = nativeRunnerCheckpointWriter(fixture.db, owner);
       const transport = createRunnerdCodexTransport({ ...transportOptions(fixture, root),
         codexArgs: ["--state-file", resolve(root, "provider.json"), "--linger-after-turn-start",
@@ -1293,7 +1376,7 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
         samples.push(snapshot);
       } finally {
         measuring = false;
-        fixture.db.$client.options.debug = priorDebug;
+        capturedClients.forEach((client, index) => { client.options.debug = priorDebug[index]; });
         await transport.transport.close();
       }
     }
