@@ -3907,6 +3907,7 @@ export function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType
   // History paging and delivery recovery have separate cursors: a recovered
   // live tail cannot consume pages the user has not chosen to retain.
   useEffect(() => {
+    setLoadingMoreEvents(false);
     if (!visible) return;
     let cancelled = false;
     let timer: number | undefined;

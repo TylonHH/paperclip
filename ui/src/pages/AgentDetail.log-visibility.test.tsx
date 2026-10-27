@@ -99,6 +99,40 @@ it.each([LogViewer, ProductionLogViewer])("uses shared streaming and retains fal
 });
 
 // Rendering thousands of real event rows is part of this proof, not a five-second latency gate.
+it.each([LogViewer, ProductionLogViewer])("re-enables cancelled history paging after hiding and showing a completed run (%#)", async Viewer => {
+  const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  log.mockResolvedValue({ content: "", nextOffset: 0 });
+  const rows = Array.from({ length: 1001 }, (_, index) => ({ id: index + 1, seq: index + 1,
+    runId: "run-1", companyId: "company-1", agentId: "agent-1", createdAt: new Date(),
+    eventType: "output", stream: "system" as const, level: "info" as const, color: null, message: null, payload: null }));
+  let finishCancelled!: (rows: HeartbeatRunEvent[]) => void;
+  events.mockResolvedValueOnce(rows.slice(0, 1000));
+  events.mockImplementationOnce(() => new Promise(resolve => { finishCancelled = resolve; }));
+  events.mockResolvedValueOnce(rows.slice(1000));
+  const run = { id: "run-1", companyId: "company-1", agentId: "agent-1", status: "succeeded" } as HeartbeatRun;
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const more = () => [...container.querySelectorAll("button")].find(button => /Load more events|Loading\.\.\./.test(button.textContent ?? ""));
+  try {
+    await act(async () => root.render(<Viewer run={run} adapterType="codex_local" />));
+    await act(async () => more()!.click());
+    expect(more()!.disabled).toBe(true);
+    const cancelledSignal = events.mock.calls[1]![3]!.signal;
+    await act(async () => { visibility.mockReturnValue("hidden"); document.dispatchEvent(new Event("visibilitychange")); });
+    expect(cancelledSignal?.aborted).toBe(true);
+    await act(async () => { visibility.mockReturnValue("visible"); document.dispatchEvent(new Event("visibilitychange")); });
+    expect(events).toHaveBeenCalledTimes(2);
+    expect(more()!.disabled).toBe(false);
+    await act(async () => more()!.click());
+    expect(events).toHaveBeenCalledTimes(3);
+    expect(events).toHaveBeenLastCalledWith(run.id, 1000, 1000, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(more()).toBeUndefined();
+    await act(async () => finishCancelled(rows.slice(1000)));
+    expect(events).toHaveBeenCalledTimes(3);
+    expect(more()).toBeUndefined();
+  } finally { await act(async () => root.unmount()); }
+}, 30_000);
+
 it.each([LogViewer, ProductionLogViewer])("bounds automatic event history and pages further only on request (%#)", async Viewer => {
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   log.mockResolvedValue({ content: "", nextOffset: 0 });
