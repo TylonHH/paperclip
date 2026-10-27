@@ -6,6 +6,7 @@ import {
 } from "node:crypto";
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -48,6 +49,49 @@ const identity: DurableRecoveryIdentity = {
 };
 const expectedRunnerVersion = "0.3.0";
 const expectedRunnerDigest = `sha256:${"a".repeat(64)}`;
+
+it("continues externally persisted commands after losing the local controller directory", async () => {
+  const root = mkdtempSync(resolve(tmpdir(), "runner-external-store-"));
+  const options = { stateDirectory: resolve(root, "control-plane"), identity, expectedRunnerVersion, expectedRunnerDigest };
+  const core = new DurablePrpControlPlane(options);
+  let checkpoint!: DurablePrpCheckpoint;
+  core.setCheckpointPersistence(async saved => { checkpoint = saved; });
+  let restored: DurablePrpControlPlane | undefined;
+  try {
+    await core.start();
+    const client = (await authenticate(core, core.issueBootstrapTicket()))!;
+    rmSync(options.stateDirectory, { recursive: true });
+    core.queueCommand("session.snapshot", {}, "external-only-command", true);
+    expect(await receiveSecure(client)).toMatchObject({ kind: "command", payload: { commandId: "external-only-command" } });
+    await core.flushCheckpoint();
+    expect(existsSync(options.stateDirectory)).toBe(false);
+    client.socket.destroy();
+    await core.stop();
+    checkpoint.restoreSessionDirectory(root);
+    restored = new DurablePrpControlPlane(options);
+    expect(restored.getCommand("external-only-command")).toMatchObject({ type: "session.snapshot" });
+  } finally {
+    await restored?.stop();
+    await core.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("requires the external checkpoint instead of accepting a stale local controller file", async () => {
+  const root = mkdtempSync(resolve(tmpdir(), "runner-external-store-restart-"));
+  const options = { stateDirectory: root, identity, expectedRunnerVersion, expectedRunnerDigest };
+  const core = new DurablePrpControlPlane(options);
+  core.setCheckpointPersistence(async () => {});
+  try {
+    core.queueCommand("session.snapshot", {}, "external-command");
+    await core.flushCheckpoint();
+    await core.stop();
+    expect(() => new DurablePrpControlPlane(options)).toThrow(/external checkpoint/i);
+  } finally {
+    await core.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 it("restores authentication and commands from opaque checkpoint records", async () => {
   const root = mkdtempSync(resolve(tmpdir(), "runner-checkpoint-codec-"));
@@ -163,13 +207,14 @@ it("streams output without checkpoint writes and recovers its authenticated curs
     await core.start();
     const client = (await authenticate(core, core.issueBootstrapTicket()))!;
     const before = snapshots.length;
+    const localState = readFileSync(core.store.path, "utf8");
     for (let seq = 1; seq <= 64; seq++) {
       sendSecure(client, ordinaryOutput(seq));
       expect(await receiveSecure(client)).toMatchObject({ kind: "ack", payload: { ackedSourceSeq: seq } });
     }
     await core.flushCheckpoint();
     expect(snapshots).toHaveLength(before);
-    expect(JSON.parse(readFileSync(core.store.path, "utf8")).ackedSourceSeq).toBe(0);
+    expect(readFileSync(core.store.path, "utf8")).toBe(localState);
     const saved = snapshots.at(-1)!;
     expect(saved.recoveryEvidence).toEqual({ runnerInstanceId: identity.runnerInstanceId,
       normalizedSessionId: identity.normalizedSessionId, authenticatedConnectionCount: 1, highestRecordedSourceSeq: 0 });
@@ -3478,13 +3523,15 @@ describe("DurablePrpControlPlane", () => {
     const root = mkdtempSync(
       resolve(tmpdir(), "paperclip-prp-attach-transition-"),
     );
+    let externalCheckpoint: DurablePrpCheckpoint | undefined;
     let core = new DurablePrpControlPlane({
-      stateDirectory: root,
+      stateDirectory: resolve(root, "control-plane"),
       identity,
       expectedRunnerVersion,
       expectedRunnerDigest,
     });
-    if (mode === "activate" || mode === "activate-v2") core.setCheckpointPersistence(async () => {});
+    const usesExternalPersistence = mode === "activate" || mode === "activate-v2";
+    if (usesExternalPersistence) core.setCheckpointPersistence(async checkpoint => { externalCheckpoint = checkpoint; });
     const nextIdentity = {
       ...identity,
       runId: "00000000-0000-4000-8000-000000000002",
@@ -3501,6 +3548,7 @@ describe("DurablePrpControlPlane", () => {
       core.persistRunAttachTemplate({ provider: { kind: "mock", run: "prior" } });
       core.persistPreparedLaunchConfiguration(identity, "prior-configuration");
       core.persistPreparedLaunchConfiguration(nextIdentity, "next-configuration");
+      if (usesExternalPersistence) rmSync(resolve(root, "control-plane"), { recursive: true });
       const command = core.queueCommand(
         "run.attach",
         {
@@ -3516,7 +3564,7 @@ describe("DurablePrpControlPlane", () => {
       await expect(receiveSecure(peer!)).resolves.toMatchObject({
         kind: "command",
       });
-      const beforeResult = readFileSync(core.store.path, "utf8");
+      const beforeResult = usesExternalPersistence ? null : readFileSync(core.store.path, "utf8");
       const result = {
         commandId: command.commandId,
         commandType: command.type,
@@ -3558,9 +3606,10 @@ describe("DurablePrpControlPlane", () => {
       peer!.socket.destroy();
       await core.stop();
       if (mode === "bootstrap-before-result")
-        writeFileSync(core.store.path, beforeResult);
+        writeFileSync(core.store.path, beforeResult!);
+      externalCheckpoint?.restoreSessionDirectory(root);
       core = new DurablePrpControlPlane({
-        stateDirectory: root,
+        stateDirectory: resolve(root, "control-plane"),
         identity,
         expectedRunnerVersion,
         expectedRunnerDigest,
@@ -3725,7 +3774,7 @@ describe("DurablePrpControlPlane", () => {
             expect(core.getCommand(command.commandId)?.status).toBe("pending");
             await core.stop();
             core = new DurablePrpControlPlane({
-              stateDirectory: root,
+              stateDirectory: resolve(root, "control-plane"),
               identity,
               expectedRunnerVersion,
               expectedRunnerDigest,
@@ -3959,7 +4008,7 @@ describe("DurablePrpControlPlane", () => {
           successor!.socket.destroy();
           await core.stop();
           core = new DurablePrpControlPlane({
-            stateDirectory: root,
+            stateDirectory: resolve(root, "control-plane"),
             identity: nextIdentity,
             expectedRunnerVersion,
             expectedRunnerDigest,

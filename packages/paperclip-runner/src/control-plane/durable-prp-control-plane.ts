@@ -53,6 +53,7 @@ const protocolVersion = RUNNER_PRP_PROTOCOL_MAX;
 const secureFrameSchema = "paperclip.runner.secure-frame.v1";
 const websocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const coreStateSchema = "paperclip.runner.durable.control-plane-state.v1";
+const externalCoreStateSchema = "paperclip.runner.external-control-plane-state.v1";
 const transitionCoreStateSchema =
   "paperclip.runner.durable.control-plane-state.warm-transition.v1";
 const maxFrameBytes = 1024 * 1024;
@@ -1372,6 +1373,7 @@ class DurableCoreStore {
   readonly path: string;
   #state: StoredCoreState;
   #writeIndeterminate = false;
+  #externallyPersisted = false;
   revision = 0;
 
   constructor(directory: string, identity: DurableRecoveryIdentity) {
@@ -1392,6 +1394,9 @@ class DurableCoreStore {
     const stored = readPrivateFile(this.path);
     if (stored !== null) {
       const parsed = JSON.parse(stored) as unknown;
+      if (isRecord(parsed) && parsed.schema === externalCoreStateSchema) {
+        throw new Error("Restore the external checkpoint before opening this controller.");
+      }
       if (!isStoredCoreState(parsed, identity)) {
         throw new Error(
           "Control-plane state is invalid or does not match the requested PRP identity.",
@@ -1406,6 +1411,24 @@ class DurableCoreStore {
 
   get state(): StoredCoreState {
     return this.#state;
+  }
+
+  useExternalPersistence(): void {
+    this.assertWritable();
+    // Leave a fail-closed marker, never a stale recovery snapshot. The external
+    // checkpoint must be restored before another controller opens this root.
+    try {
+      atomicPrivateWrite(this.path, JSON.stringify({
+        schema: externalCoreStateSchema,
+        identity: this.#state.identity,
+      }));
+    } catch (error) {
+      this.#writeIndeterminate = true;
+      throw error;
+    }
+    this.#state.checkpointEventPolicy = "control-v1";
+    this.#externallyPersisted = true;
+    this.revision += 1;
   }
 
   saveEvent(event: DurableRecoveryCommittedEvent): void {
@@ -1427,7 +1450,9 @@ class DurableCoreStore {
 
   private write(): void {
     this.assertWritable();
-    atomicPrivateWrite(this.path, `${JSON.stringify(this.#state, null, 2)}\n`);
+    if (!this.#externallyPersisted) {
+      atomicPrivateWrite(this.path, `${JSON.stringify(this.#state, null, 2)}\n`);
+    }
   }
 
   assertWritable(): void {
@@ -1442,7 +1467,9 @@ class DurableCoreStore {
     this.assertWritable();
     candidate.checkpointEventPolicy ??= this.#state.checkpointEventPolicy;
     try {
-      atomicPrivateWrite(this.path, `${JSON.stringify(candidate, null, 2)}\n`);
+      if (!this.#externallyPersisted) {
+        atomicPrivateWrite(this.path, `${JSON.stringify(candidate, null, 2)}\n`);
+      }
       this.#state = candidate;
       this.revision += 1;
     } catch (error) {
@@ -1755,13 +1782,17 @@ export class DurablePrpControlPlane {
     return this.#recoveredCursor?.runId === this.#identity.runId ? this.#recoveredCursor.sourceSeq : 0;
   }
 
+  /**
+   * Make the callback the durable authority. Local state becomes a marker;
+   * restart must restore its checkpoint before constructing the controller.
+   * Outbound frames and semantic dispatch still await the callback's commit.
+   */
   setCheckpointPersistence(persist: (checkpoint: DurablePrpCheckpoint) => Promise<void>): void {
     if (this.#connections.size > 0 || this.#persistCheckpoint !== null) {
       throw new Error("runner_controller_persistence_already_active");
     }
+    this.#store.useExternalPersistence();
     this.#persistCheckpoint = persist;
-    this.#store.state.checkpointEventPolicy = "control-v1";
-    this.#store.save();
   }
 
   flushCheckpoint(): Promise<void> {

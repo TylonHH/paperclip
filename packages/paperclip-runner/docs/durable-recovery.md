@@ -78,6 +78,14 @@ coalesced into the next control checkpoint. Authentication, command intents and
 outcomes, semantic inputs, lifecycle and result events retain commit barriers.
 Priority-zero and unknown event kinds are never treated as disposable output.
 
+Installing the callback makes it the controller's durable authority. The local
+state file is replaced once with a fail-closed marker; ordinary control changes
+no longer rewrite or fsync a second local journal. The controller can continue
+if that directory disappears. A new controller must restore the committed
+external checkpoint before opening the directory; the marker cannot recover
+an execution or authorize a new one. This does not change the sandbox runner's
+journal or controllers without an external persistence callback.
+
 Fresh semantic inputs reserve their original live callback before awaiting the
 checkpoint barrier. Recovery cannot steal first dispatch when no saved outcome
 exists. The reservation is released if persistence or admission fails; business
