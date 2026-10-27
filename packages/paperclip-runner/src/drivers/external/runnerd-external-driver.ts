@@ -217,7 +217,7 @@ class RunnerdExternalSession implements HarnessSession {
         this.#wake();
       },
       onSemanticToolInput: handleSemanticInput,
-      recoverSemanticToolInput: call =>
+      recoverSemanticToolInput: async call =>
         call.operationId === "paperclip_finish" || call.operationId === "paperclip_block"
           ? handleSemanticInput(call) : o.recoverSemanticToolInput?.(call) ?? null,
     });
