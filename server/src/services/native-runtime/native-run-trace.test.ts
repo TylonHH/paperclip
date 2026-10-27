@@ -9,6 +9,7 @@ import {
   createNativeRunTrace,
   nativeRunPreparationStarts,
   recordFailedSkillPreparation,
+  recordNativeProviderPerformanceSpans,
   NATIVE_RUN_SPAN_EVENT_TYPE,
   NATIVE_RUN_TRACE_SCHEMA_VERSION,
 } from "./native-run-trace.js";
@@ -66,6 +67,20 @@ function createRecordingTraceContext(): {
 }
 
 describe("native runner performance trace", () => {
+  it("groups normalized provider phases under their real native execution parent", async () => {
+    const {traceContext, spans}=createRecordingTraceContext();
+    const trace=createNativeRunTrace({runId:"provider-perf",startedAtMs:1000,traceContext});
+    const execute=trace.start("native.session.execute",{startedAtMs:1000});
+    await recordNativeProviderPerformanceSpans(trace,[
+      {name:"provider.context.environment",startedAtMs:1100,endedAtMs:1200},
+      {name:"provider.model.stream",startedAtMs:1200,endedAtMs:1700},
+    ]);
+    await trace.end(execute,{endedAtMs:1800});
+    await trace.finish("ok");
+    expect(spans.find(s=>s.name==="provider.runtime")).toMatchObject({parentName:"native.session.execute",endedAtMs:1700});
+    expect(spans.filter(s=>s.name==="provider.model.stream"||s.name==="provider.context.environment").map(s=>s.parentName))
+      .toEqual(["provider.runtime","provider.runtime"]);
+  });
   it.each([7_200_000, 10_800_000])(
     "times the current answer after %i ms without charging prior questions or human wait",
     async (answeredAtMs) => {

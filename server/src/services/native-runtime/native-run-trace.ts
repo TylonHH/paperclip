@@ -528,6 +528,22 @@ export function createNativeRunTrace(input: {
 
 export type NativeRunTrace = ReturnType<typeof createNativeRunTrace>;
 
+/** Group already-normalized provider measurements without exporting provider attributes. */
+export async function recordNativeProviderPerformanceSpans(trace: NativeRunTrace, spans: NativeRunHistoricalSpan[]): Promise<void> {
+  if (!spans.length) return;
+  try {
+    const scope = trace.start("provider.runtime", { parentName: "native.session.execute",
+      startedAtMs: Math.min(...spans.map(span => span.startedAtMs)) });
+    try {
+      for (const span of spans) await trace.record({ name: span.name, parentName: "provider.runtime",
+        startedAtMs: span.startedAtMs, endedAtMs: span.endedAtMs, outcome: span.outcome });
+    } finally {
+      await trace.end(scope, { endedAtMs: Math.max(...spans.map(span => span.endedAtMs)),
+        outcome: spans.some(span => span.outcome === "failed") ? "failed" : "ok" });
+    }
+  } catch { /* Diagnostics cannot replace the work's result. */ }
+}
+
 /** Emit preparation failure even when execution aborts before a native session exists. */
 export async function recordFailedSkillPreparation(input: {
   runId: string;
