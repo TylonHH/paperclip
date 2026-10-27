@@ -124,7 +124,6 @@ describePostgres("heartbeat session preparation through adapter dispatch", () =>
       executionWorkspaceSettings: { workspaceStrategy: { type: "git_worktree", branchTemplate: "work" } },
     }).where(eq(issues.id, f.issueId));
     await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: true, enableIsolatedWorkspacesByDefault: true });
-    // The synthetic adapter observes admission/session selection without launching a provider.
     const cwd = await mkdtemp(join(tmpdir(), "session-provider-fixture-"));
     const createOrchestrator = environmentOrchestrator.environmentRunOrchestrator;
     const realization = vi.spyOn(environmentOrchestrator, "environmentRunOrchestrator").mockImplementation((...args) => ({
@@ -153,7 +152,6 @@ describePostgres("heartbeat session preparation through adapter dispatch", () =>
           workspace: { action: "reuse", workspaceReused: true, changedCategories: [], activeWorkspaceId: bound.executionWorkspaceId },
         } });
       }
-      // A real policy change still rotates the session without changing the stored owner.
       await db.update(projects).set({ executionWorkspacePolicy: { enabled: true, allowIssueOverride: false } }).where(eq(projects.id, storage.input.projectId));
       const changed = await execute(f);
       expect(changed.input.runtime.sessionId).toBeNull();
