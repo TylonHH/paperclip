@@ -152,7 +152,7 @@ describe("useLiveRunTranscripts", () => {
     const chunks = () => buildTranscriptMock.mock.calls.at(-1)?.[0];
     try {
       await act(async () => root.render(<Harness limit={32_000} />));
-      expect(logMock).toHaveBeenCalledWith("run-1", 68_000, 32_000, expect.objectContaining({ alignStartToRecord: true }));
+      expect(logMock).toHaveBeenNthCalledWith(1, "run-1", 68_000, 32_000, expect.objectContaining({ alignStartToRecord: true }));
       expect(truncatedRunIds.has("run-1")).toBe(true);
       expect(chunks()).toEqual([expect.objectContaining({ chunk: "Latest answer" })]);
       await act(async () => root.render(<Harness limit={256_000} />));
@@ -176,7 +176,9 @@ describe("useLiveRunTranscripts", () => {
     const row = (seq: number) => `${JSON.stringify({ seq, chunk: `Output ${seq}`, stream: "stdout", ts: "2026-10-24T00:00:00Z" })}\n`;
     const response = { runId: "run-1", store: "memory", logRef: "log-1" };
     logMock.mockResolvedValueOnce({ ...response, content: row(1), nextOffset: 100 });
+    logMock.mockResolvedValueOnce({ ...response, content: "", nextOffset: 100 });
     logMock.mockResolvedValueOnce({ ...response, content: row(2), nextOffset: 100_000 });
+    logMock.mockResolvedValueOnce({ ...response, content: "", nextOffset: 100_000 });
     function Harness({ bytes }: { bytes: number }) {
       ({ truncatedRunIds } = useLiveRunTranscripts({
         runs: [{ id: "run-1", status: "succeeded", adapterType: "codex_local", logBytes: bytes }],
@@ -187,10 +189,10 @@ describe("useLiveRunTranscripts", () => {
     const root = createRoot(document.createElement("div"));
     try {
       await act(async () => root.render(<Harness bytes={100} />));
-      expect(logMock).toHaveBeenLastCalledWith("run-1", 0, 32_000, expect.anything());
+      expect(logMock).toHaveBeenNthCalledWith(1, "run-1", 0, 32_000, expect.anything());
       expect(truncatedRunIds.has("run-1")).toBe(false);
       await act(async () => root.render(<Harness bytes={100_000} />));
-      expect(logMock).toHaveBeenLastCalledWith("run-1", 100, 32_000, expect.anything());
+      expect(logMock).toHaveBeenNthCalledWith(3, "run-1", 100, 32_000, expect.anything());
       expect(truncatedRunIds.has("run-1")).toBe(false);
     } finally { await act(async () => root.unmount()); }
   });

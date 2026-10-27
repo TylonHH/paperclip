@@ -446,6 +446,7 @@ export function useLiveRunTranscripts({
           rewinding = true;
         }
       }
+      let recordInitialWindow = previousReadLimit === undefined || rewinding;
       try {
         for (;;) {
           const result = await readTranscriptRequest(
@@ -458,14 +459,16 @@ export function useLiveRunTranscripts({
           const binding = bindLog(run.id, result.store, result.logRef);
           if (binding === "stale") { failed = true; return; }
           if (binding === "changed" && offset !== 0) { offset = 0; continue; }
-          if (previousReadLimit === undefined || rewinding || binding === "changed") {
+          if (recordInitialWindow || binding === "changed") {
+            const windowIsTruncated = offset > 0;
             setTruncatedRunIds(previous => {
-              if (previous.has(run.id) === (offset > 0)) return previous;
+              if (previous.has(run.id) === windowIsTruncated) return previous;
               const next = new Set(previous);
-              if (offset > 0) next.add(run.id);
+              if (windowIsTruncated) next.add(run.id);
               else next.delete(run.id);
               return next;
             });
+            recordInitialWindow = false;
           }
           logReadLimitByRunRef.current.set(run.id, logReadLimitBytes);
           if (rewinding) {
