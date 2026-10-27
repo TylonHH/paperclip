@@ -1131,3 +1131,14 @@ current-head CI is required; an isolated pass does not turn an earlier job green
 The runner-only local API-authority check passes 2,027 cases but its 47 real HTTP
 cases cannot initialize embedded Postgres on this Mac. The integrated server's
 owned-database HTTP path is verified separately.
+
+A subsequent qualification review catches drift between the Claude continuity
+check and its supervisor request: the former requires outage evidence for ACPX,
+while the latter creates it only for Codex. The existing Claude Daytona roster
+cell fails a selected-cell fault-receipt regression before the correction.
+Both consumers now use the same outage policy. The existing Codex and Claude
+cells produce valid replacement fault receipts through the supervisor contract;
+local, legacy and Stop cells retain their prior behavior. All 108 affected
+qualification tests and the runner E2E typecheck pass. This is selection and
+receipt-contract proof with injected supervisor operations, not a new hosted
+Claude qualification.

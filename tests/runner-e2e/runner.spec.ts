@@ -2,7 +2,7 @@ import { createWorkerTiming } from "./worker-timing.js";
 import { FEEDBACK_PERSISTENCE_SUITE, gradeFeedbackPersistence } from "./feedback-persistence.js";
 import { EvalAttemptTrace, evalBraintrustConfig, EVAL_OBSERVABILITY_SECRET_NAMES } from "./braintrust.js";
 import { captureFollowupStopFailureApiState } from "./followup-stop-evidence.js";
-import { configuredControllerOutage, validControllerOutageReceipt, type ControllerOutage, type ControllerOutageReceipt } from "./controller-outage.js";
+import { controllerOutageForExecution, validControllerOutageReceipt, type ControllerOutage, type ControllerOutageReceipt } from "./controller-outage.js";
 import { runFollowupStopResumeFlow } from "./followup-stop-resume-flow.js";
 import { runFinalizationRecoveryFlow } from "./finalization-recovery-flow.js";
 import type { FinalizationCrashBinding } from "./finalization-crash-boundary.js";
@@ -590,9 +590,7 @@ async function expectPlanStageVisible(
 }
 
 for (const execution of executions) {
-  const controllerOutage = execution.suite.id === "everyday-workflows" && execution.task.id === "recover-controller"
-    && execution.environment.id === "daytona" && execution.profile.generation === "native" && execution.profile.provider === "codex"
-    ? configuredControllerOutage(process.env) : undefined;
+  const controllerOutage = controllerOutageForExecution(execution, process.env);
   const privateDir = path.join(privateRoot, "cases", execution.task.id);
   const resultPath = path.join(privateDir, "result.json");
   const snapshotsDir = path.join(privateDir, "snapshots");
