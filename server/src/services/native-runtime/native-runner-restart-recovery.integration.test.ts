@@ -1287,6 +1287,43 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
     expect(run?.processPid).toBe(remotePid);
   });
 
+  it("gives a recovery claim its full lease after an old batch observation", async () => {
+    const fixture = await seedRun("LATE-BATCH-CLAIM");
+    const binding = { companyId, issueId: fixture.issueId, runId: fixture.runId };
+    const root = resolve(runtimeRoot, fixture.runId);
+    const observedAt = new Date(Date.now() - 90_000);
+    await fixture.db.update(heartbeatRuns).set({ runnerProfileJson: {
+      nativeWorkspaceSync: { schema: "paperclip.native-workspace-sync/v1", state: "prepared",
+        descriptorSha256: "a".repeat(64), baselineSha256: "b".repeat(64), workspaceId: "workspace",
+        leaseId: "lease", providerLeaseId: "sandbox", remoteCwd: "/workspace" },
+      sessionCheckpoint: { identity: { ...binding, agentId, sessionId: fixture.native.normalizedSessionId },
+        providerSessionId: "surviving-provider" },
+    } }).where(eq(heartbeatRuns.id, fixture.runId));
+    await fixture.db.update(nativeRunFinalizations).set({ controllerBootId: successor.bootId,
+      controllerGeneration: 1, leaseOwner: "previous-batch-owner", leaseExpiresAt: new Date(Date.now() + 60_000) })
+      .where(eq(nativeRunFinalizations.runId, fixture.runId));
+    const authority = new DurablePrpControlPlane({ stateDirectory: resolve(root, "control-plane"),
+      identity: transportOptions(fixture, root).prpIdentity,
+      expectedRunnerVersion: "late-batch-fixture", expectedRunnerDigest: `sha256:${"a".repeat(64)}` });
+    try {
+      await registerNativeRunnerCheckpoint({ db: fixture.db, binding, bootId: successor.bootId, authority });
+      // Set up an abandoned predecessor. Never alter the successor's deadline.
+      await fixture.db.update(nativeRunFinalizations).set({ leaseExpiresAt: new Date(observedAt.getTime() - 1_000) })
+        .where(eq(nativeRunFinalizations.runId, fixture.runId));
+      const controller = { ...successor, bootId: randomUUID() };
+      const [claim] = await claimNativeRestartRecoveries({ db: fixture.db, controller,
+        restartKind: "hard", now: observedAt, runIds: [fixture.runId] });
+      expect(claim).toMatchObject({ kind: "reattach_remote_runner", runId: fixture.runId });
+      if (!("leaseOwner" in claim)) throw new Error("Expected a recovery claim");
+      const [saved] = await fixture.db.execute(sql`select extract(epoch from (lease_expires_at - clock_timestamp())) as remaining
+        from native_run_finalizations where run_id = ${fixture.runId}`);
+      expect(Number(saved.remaining)).toBeGreaterThan(55);
+      expect(Number(saved.remaining)).toBeLessThanOrEqual(60);
+      await expect(renewNativeSessionExecutionLease({ db: fixture.db, ...binding, controller,
+        leaseOwner: claim.leaseOwner, attempt: claim.providerAttempt, leaseTtlMs: 60_000 })).resolves.toBeUndefined();
+    } finally { await authority.stop(); }
+  });
+
   realProcessIt("keeps checkpoint SQL independent of streamed output volume with a real Postgres writer", async () => {
     const samples: Array<{ chunks: number; checkpointWrites: number; transactions: number;
       changedRows: number; checkpointBytes: number; walBytes: number; elapsedMs: number; idleSql: number;
