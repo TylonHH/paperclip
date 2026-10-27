@@ -1,11 +1,9 @@
 import { createHash } from 'node:crypto';
-import { createRequire } from 'node:module';
 import { readFile } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 
-const require = createRequire(new URL('../../../../server/package.json', import.meta.url));
-const { tsImport } = await import(require.resolve('tsx/esm/api'));
-export const costRuntime = await tsImport('./shared-cost-runtime.ts', import.meta.url);
+import { costRuntime } from './runtime.mjs';
+export { costRuntime };
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 export const canonical = value => JSON.stringify(value, (_key, item) => item && typeof item === 'object' && !Array.isArray(item)
   ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
@@ -34,7 +32,7 @@ export async function readJson(file, maximum = 1_048_576) {
 }
 export function validateManifest(value, now = Date.now(), { admission = true } = {}) {
   fields(value, ['schema', 'campaignId', 'maxUsd', 'deadlineAt', 'pricingVerifiedAt', 'pricingExpiresAt', 'overhead',
-    'sourceRevision', 'definitionsRevision', 'runnerCli', 'runnerPackage', 'runnerd', 'outputDirectory', 'route', 'projectId', 'models', 'attempts']);
+    'sourceRevision', 'definitionsRevision', 'runnerCli', 'runnerPackage', 'runnerd', 'outputDirectory', 'route', 'projectId', 'models', 'attempts', 'observability', 'hosted']);
   const deadline = Date.parse(value.deadlineAt);
   const verified = Date.parse(value.pricingVerifiedAt), expires = Date.parse(value.pricingExpiresAt);
   if (value.schema !== 'paperclip.runner-eval.controller/v1' || !id(value.campaignId)
@@ -48,6 +46,7 @@ export function validateManifest(value, now = Date.now(), { admission = true } =
     fields(artifact, ['path', 'sha256']);
     if (!isAbsolute(artifact.path ?? '') || !hash(artifact.sha256)) throw new Error('Invalid controller executable provenance');
   }
+  validateHostedIdentity(value);
   const overhead = costRuntime.validateOperatingOverhead(value.overhead, value.maxUsd);
   if (admission && Date.parse(value.overhead.verifiedAt) > now || Date.parse(value.overhead.expiresAt) <= deadline
       || value.overhead.components.some(component => !component.provisionalBound)) throw new Error('Controller requires current full-lifecycle operating bounds');
@@ -81,8 +80,36 @@ export function validateManifest(value, now = Date.now(), { admission = true } =
     attempts.add(attempt.attemptId); executions.add(attempt.executionId); allocated += units(attempt.maxUsd);
   }
   if (allocated > units(value.maxUsd)) throw new Error('Controlled allocations exceed the campaign budget');
+  validateObservability(value);
   return { manifest: structuredClone(value), manifestSha256: sha256(canonical(value)), allocatedUsd: usd(allocated), overheadUsd: usd(overhead) };
 }
+function validateHostedIdentity(manifest) {
+  const hosted = manifest.hosted;
+  if (hosted === undefined) return;
+  fields(hosted, ['repository', 'runId', 'runAttempt', 'workflowRevision']);
+  if (typeof hosted.repository !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}\/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/.test(hosted.repository)
+      || typeof hosted.runId !== 'string' || !/^[1-9][0-9]{0,19}$/.test(hosted.runId)
+      || hosted.runAttempt !== 1 || typeof hosted.workflowRevision !== 'string' || !/^[a-f0-9]{40}$/.test(hosted.workflowRevision)
+      || manifest.campaignId !== `gha-${hosted.runId}-1`) throw new Error('Invalid hosted controller identity');
+}
+
+export function assertHostedAdmission(manifest, attempt, environment) {
+  validateHostedIdentity(manifest);
+  const hosted = manifest.hosted;
+  if (!hosted) {
+    if (['GITHUB_ACTIONS', 'GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_SHA'].some(key => environment[key] !== undefined)) {
+      throw new Error('GitHub execution requires a hosted controller identity');
+    }
+    return;
+  }
+  if (environment.GITHUB_ACTIONS !== 'true' || environment.GITHUB_REPOSITORY !== hosted.repository
+      || environment.GITHUB_RUN_ID !== hosted.runId || environment.GITHUB_RUN_ATTEMPT !== '1'
+      || environment.GITHUB_SHA !== hosted.workflowRevision
+      || environment.PAPERCLIP_RUNNER_EVAL_EXECUTION_ID !== attempt.executionId) {
+    throw new Error('Hosted controller admission does not match the current first-attempt worker');
+  }
+}
+
 export function bindRequest(manifest, request) {
   const attempt = manifest.attempts.find(item => item.attemptId === request.attemptId);
   if (!attempt || requestBindingSha256(request) !== attempt.requestSha256 || request.provider !== attempt.provider
@@ -90,4 +117,29 @@ export function bindRequest(manifest, request) {
       || request.model !== attempt.model || request.runnerd.sha256.replace(/^sha256:/, '') !== manifest.runnerd.sha256
       || request.runnerd.path !== manifest.runnerd.path) throw new Error('Controlled request does not match its allocated identity');
   return attempt;
+}
+
+export const ROOT_OTLP_LIMITS = Object.freeze({ maxRequests: 1, maxRequestBytes: 16_384, maxTotalBytes: 16_384,
+  maxConcurrent: 1, maxExpandedBytes: 65_536, maxRecords: 1 });
+export function observabilityBoundConfiguration(manifest) {
+  const policy = manifest.observability;
+  return { schema: 'paperclip.runner-eval.observability-bound/v1', campaignId: manifest.campaignId, deadlineAt: manifest.deadlineAt,
+    sourceRevision: manifest.sourceRevision, definitionsRevision: manifest.definitionsRevision,
+    projectId: policy.projectId, capture: policy.capture, nativeLimits: policy.nativeLimits, rootLimits: ROOT_OTLP_LIMITS,
+    attempts: manifest.attempts.map(({ executionId, attemptId, requestSha256 }) => ({ executionId, attemptId, requestSha256 })),
+    overhead: manifest.overhead };
+}
+function validateObservability(manifest) {
+  const policy = manifest.observability;
+  if (policy === undefined) return;
+  fields(policy, ['projectId', 'capture', 'nativeLimits', 'provisionalBound']);
+  fields(policy.capture, ['userPrompts', 'assistantResponses', 'toolDetails', 'toolContent']);
+  if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(policy.projectId ?? '')
+      || manifest.route === 'braintrust' && policy.projectId !== manifest.projectId
+      || Object.keys(policy.capture).length !== 4 || Object.values(policy.capture).some(value => typeof value !== 'boolean')
+      || canonical(Object.keys(policy.nativeLimits ?? {}).sort()) !== canonical(Object.keys(costRuntime.EVAL_OTLP_LIMITS).sort())
+      || Object.entries(costRuntime.EVAL_OTLP_LIMITS).some(([key, max]) => !Number.isSafeInteger(policy.nativeLimits[key]) || policy.nativeLimits[key] < 1 || policy.nativeLimits[key] > max)) throw new Error('Invalid controller observability allocation');
+  const operating = manifest.overhead.components.find(item => item.component === 'observability');
+  if (!operating || policy.provisionalBound?.evidenceSha256 !== operating.provisionalBound?.evidenceSha256) throw new Error('Observability capacity requires its operating bound evidence');
+  costRuntime.reservationBound('operating_allowance', policy.provisionalBound, observabilityBoundConfiguration(manifest));
 }
