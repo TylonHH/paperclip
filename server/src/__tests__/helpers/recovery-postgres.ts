@@ -16,7 +16,7 @@ export async function startRecoveryPostgres(prefix: string) {
   const url = new URL(external); url.pathname = `/${databaseName}`;
   const connectionString = url.toString();
   const cleanup = async () => {
-    await closeRegisteredClients(connectionString);
+    await closeRegisteredClients(connectionString, { scope: "database" });
     const owner = createDb(external);
     try { await owner.$client.unsafe(`drop database "${databaseName}"`); }
     finally { await owner.$client.end(); }
