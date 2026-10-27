@@ -1045,6 +1045,19 @@ describe("agent routes adapter validation", () => {
     expect(saved.adapterConfig).not.toHaveProperty("command");
   });
 
+  it.each([undefined, "acpx"])("preserves an explicitly selected ACPX agent when converting Grok (provider: %s)", async provider => {
+    const existing = await mockAgentService.getById();
+    mockAgentService.getById.mockResolvedValue({ ...existing, adapterType: "grok_local", adapterConfig: { model: "grok-4.7" } });
+    const app = await createApp();
+    const res = await requestApp(app, baseUrl => request(baseUrl).patch(`/api/agents/${existing.id}`)
+      .send({ adapterType: "paperclip_runner", replaceAdapterConfig: true,
+        adapterConfig: { ...(provider ? { provider } : {}), acpxAgent: "claude", model: "claude-opus-5-5" } }));
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockAgentService.update.mock.calls.at(-1)?.[1]).toMatchObject({
+      adapterType: "paperclip_runner", adapterConfig: { provider: "acpx", acpxAgent: "claude", model: "claude-opus-5-5" },
+    });
+  });
+
   it.each(["codex_local", "claude_local"])("upgrades an existing %s through runner selection with its saved settings", async adapterType => {
     const existing = await mockAgentService.getById();
     const env = { MIGRATION_MARKER: { type: "plain", value: "keep" } };

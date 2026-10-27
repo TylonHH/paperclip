@@ -5428,8 +5428,8 @@ export function agentRoutes(
       && (requestedRunnerConfig.provider === undefined
         || (requestedRunnerConfig.provider === "acpx" && [undefined, "pi"].includes(requestedRunnerConfig.acpxAgent as string | undefined)));
     const convertingGrok = existing.adapterType === "grok_local" && patchData.adapterType === "paperclip_runner"
-      && (requestedRunnerConfig.provider === undefined
-        || (requestedRunnerConfig.provider === "acpx" && [undefined, "grok"].includes(requestedRunnerConfig.acpxAgent as string | undefined)));
+      && [undefined, "acpx"].includes(requestedRunnerConfig.provider as string | undefined)
+      && [undefined, "grok"].includes(requestedRunnerConfig.acpxAgent as string | undefined);
     if (runner !== undefined || convertingPi || convertingGrok) {
       await assertCanConfigureAgentSetup(req, existing);
       const config = hasOwn(patchData, "adapterConfig") ? { ...(replaceAdapterConfig ? {} : existing.adapterConfig), ...asRecord(patchData.adapterConfig) } : existing.adapterConfig;
