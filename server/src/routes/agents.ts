@@ -1881,7 +1881,7 @@ export function agentRoutes(
         throw unprocessable("Enable Grok Bot, Assistant connections (MCP), and Paperclip Runner before connecting this agent.", { code: "paperclip_runner_grok_disabled" });
       } else if (!([undefined, "codex", "opencode"].includes(asRecord(config)?.provider as string | undefined)) &&
         !(asRecord(config)?.provider === "acpx" && asRecord(config)?.acpxAgent === "copilot") &&
-        !["claude_local", "pi_local"].includes(agentHarnessType("paperclip_runner", asRecord(config) ?? {})) &&
+        !["claude_local", "pi_local", "grok_local"].includes(agentHarnessType("paperclip_runner", asRecord(config) ?? {})) &&
         experimental.enableNativeRunner !== true) {
         throw unprocessable(
           "Paperclip Runner is experimental and disabled on this instance.",
@@ -1952,7 +1952,7 @@ export function agentRoutes(
     }
     if (["openai_dot", "muse"].includes(String(input.nextAdapterConfig.provider))) return input.nextAdapterConfig;
     const defaults = paperclipRunnerTransitionConfig(input.previousAdapterType, input.previousAdapterConfig.model, input.nextAdapterConfig.provider);
-    if (!["claude_local", "codex_local", "opencode_local", "pi_local"].includes(input.previousAdapterType)
+    if (!["claude_local", "codex_local", "opencode_local", "pi_local", "grok_local"].includes(input.previousAdapterType)
       && !isPaperclipRunnerProvider(input.nextAdapterConfig.provider)) {
       throw unprocessable("Select a Paperclip Runner provider before converting this agent.");
     }

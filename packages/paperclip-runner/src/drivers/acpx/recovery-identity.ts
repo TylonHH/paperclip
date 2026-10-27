@@ -1,4 +1,5 @@
 import { resolveClaudeEffort } from "./claude-effort.js";
+import { resolveGrokEffort } from "./grok-effort.js";
 import { parseProviderMode } from "../../contracts/provider-mode.js";
 import { resolvePiThinkingLevel, type PiThinkingLevel } from "./pi-thinking.js";
 import { createHash } from "node:crypto";
@@ -25,6 +26,7 @@ export interface AcpxRecoveryBinding {
   mode?: string;
   piThinkingLevel?: PiThinkingLevel;
   claudeEffort?: "low" | "medium" | "high" | "xhigh" | "max";
+  grokEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   profileSessionKey: string;
 }
 
@@ -42,6 +44,7 @@ export interface AcpxIdentityRecord {
   mode?: string;
   piThinkingLevel?: PiThinkingLevel;
   claudeEffort?: "low" | "medium" | "high" | "xhigh" | "max";
+  grokEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   providerLifetimeFenceCandidates: readonly [number, number, number];
 }
 
@@ -55,6 +58,7 @@ export async function createAcpxRecoveryBinding(input: {
   mode?: string;
   piThinkingLevel?: PiThinkingLevel;
   claudeEffort?: "low" | "medium" | "high" | "xhigh" | "max";
+  grokEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   providerConfigurationDigest?: string;
   homeBinding?: Readonly<Record<string, string>>;
   providerPolicy?: { readOnly: boolean; readRoots?: readonly string[]; protectedPaths?: readonly string[] };
@@ -63,6 +67,7 @@ export async function createAcpxRecoveryBinding(input: {
   const mode = parseProviderMode(input.mode);
   const piThinkingLevel = resolvePiThinkingLevel(input.profile.agent, input.piThinkingLevel);
   const claudeEffort = resolveClaudeEffort(input.profile.agent, input.claudeEffort);
+  const grokEffort = resolveGrokEffort(input.profile.agent, input.grokEffort);
   if (input.providerPolicy !== undefined && typeof input.providerPolicy.readOnly !== "boolean") throw new Error("ACPX recovery requires a valid task execution policy");
   if (input.requestedModel !== input.profile.qualificationModel) {
     throw new Error("ACPX recovery requested model does not match its admitted profile");
@@ -112,6 +117,7 @@ export async function createAcpxRecoveryBinding(input: {
       ...(mode ? { mode } : {}),
       ...(piThinkingLevel ? { piThinkingLevel } : {}),
       ...(claudeEffort ? { claudeEffort } : {}),
+      ...(grokEffort ? { grokEffort } : {}),
     }),
   ).replace("sha256:", "paperclip-");
   return {
@@ -127,6 +133,7 @@ export async function createAcpxRecoveryBinding(input: {
     ...(mode ? { mode } : {}),
       ...(piThinkingLevel ? { piThinkingLevel } : {}),
       ...(claudeEffort ? { claudeEffort } : {}),
+      ...(grokEffort ? { grokEffort } : {}),
     profileSessionKey,
   };
 }
@@ -150,6 +157,7 @@ export function createAcpxIdentityRecord(
     ...(binding.mode ? { mode: binding.mode } : {}),
     ...(binding.piThinkingLevel ? { piThinkingLevel: binding.piThinkingLevel } : {}),
     ...(binding.claudeEffort ? { claudeEffort: binding.claudeEffort } : {}),
+    ...(binding.grokEffort ? { grokEffort: binding.grokEffort } : {}),
     providerLifetimeFenceCandidates: Object.freeze([
       ...expected.providerLifetimeFenceCandidates,
     ]) as readonly [number, number, number],
@@ -178,6 +186,7 @@ export function acpxProviderSessionIdentity(
     ...(record.mode ? { mode: record.mode } : {}),
     ...(record.piThinkingLevel ? { piThinkingLevel: record.piThinkingLevel } : {}),
     ...(record.claudeEffort ? { claudeEffort: record.claudeEffort } : {}),
+    ...(record.grokEffort ? { grokEffort: record.grokEffort } : {}),
     providerLifetimeFenceCandidates: record.providerLifetimeFenceCandidates,
   };
   verifyExpectedAcpxIdentity(identity, binding, record);
@@ -205,7 +214,8 @@ export function verifyExpectedAcpxIdentity(
     expected.permissionMode !== binding.permissionMode ||
     expected.mode !== binding.mode ||
     expected.piThinkingLevel !== binding.piThinkingLevel ||
-    expected.claudeEffort !== binding.claudeEffort
+    expected.claudeEffort !== binding.claudeEffort ||
+    expected.grokEffort !== binding.grokEffort
   ) {
     throw new Error(
       "ACPX recovery identity conflicts with the immutable session configuration",
@@ -227,6 +237,7 @@ export function verifyExpectedAcpxIdentity(
     record.mode !== binding.mode ||
     record.piThinkingLevel !== binding.piThinkingLevel ||
     record.claudeEffort !== binding.claudeEffort ||
+    record.grokEffort !== binding.grokEffort ||
     !sameFenceCandidates(
       record.providerLifetimeFenceCandidates,
       expected.providerLifetimeFenceCandidates,
@@ -253,7 +264,7 @@ function parsePersistedRecord(value: unknown): AcpxIdentityRecord {
     "permissionMode",
     "mode",
     "piThinkingLevel",
-    "claudeEffort",
+    "claudeEffort", "grokEffort",
     "providerLifetimeFenceCandidates",
   ]);
   return validatedRecord(record);
@@ -282,6 +293,7 @@ function validatedRecord(value: Record<string, unknown>): AcpxIdentityRecord {
   }
   if (value.mode !== undefined) parseProviderMode(value.mode);
   resolveClaudeEffort("claude", value.claudeEffort);
+  resolveGrokEffort("grok", value.grokEffort);
   if (value.piThinkingLevel !== undefined) resolvePiThinkingLevel("pi", value.piThinkingLevel);
   validateFenceCandidates(value.providerLifetimeFenceCandidates);
   return value as unknown as AcpxIdentityRecord;
@@ -313,6 +325,7 @@ function validateExpected(expected: AcpxExpectedSessionIdentity): void {
   }
   if (expected.mode !== undefined) parseProviderMode(expected.mode);
   resolveClaudeEffort("claude", expected.claudeEffort);
+  resolveGrokEffort("grok", expected.grokEffort);
   if (expected.piThinkingLevel !== undefined) resolvePiThinkingLevel("pi", expected.piThinkingLevel);
   validateFenceCandidates(expected.providerLifetimeFenceCandidates);
 }

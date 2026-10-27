@@ -74,6 +74,8 @@ pub struct AcpxProviderSessionIdentity {
     pub pi_thinking_level: Option<PiThinkingLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grok_effort: Option<String>,
     pub provider_lifetime_fence_candidates: [u16; 3],
 }
 
@@ -97,6 +99,7 @@ pub struct AcpxProviderSessionConfig {
     pub mode: Option<String>,
     pub pi_thinking_level: Option<PiThinkingLevel>,
     pub claude_effort: Option<String>,
+    pub grok_effort: Option<String>,
     pub permission_mode_pinned: bool,
     pub provider_policy: Option<AcpxProviderRuntimePolicy>,
     pub system_instructions: String,
@@ -118,6 +121,17 @@ impl AcpxProviderSessionConfig {
         }) {
             return Err(LocalRunnerError::invalid(
                 "Claude effort must be a supported Claude-only value",
+            ));
+        }
+        if self.grok_effort.as_ref().is_some_and(|effort| {
+            self.agent != "grok"
+                || !matches!(
+                    effort.as_str(),
+                    "minimal" | "low" | "medium" | "high" | "xhigh"
+                )
+        }) {
+            return Err(LocalRunnerError::invalid(
+                "Grok effort must be a supported Grok-only value",
             ));
         }
         if (self.agent == "pi") != self.pi_thinking_level.is_some() {
@@ -200,6 +214,7 @@ impl AcpxProviderSessionConfig {
                 || expected_identity.mode != self.mode
                 || expected_identity.pi_thinking_level != self.pi_thinking_level
                 || expected_identity.claude_effort != self.claude_effort
+                || expected_identity.grok_effort != self.grok_effort
             {
                 return Err(LocalRunnerError::invalid(
                     "ACPX expected identity conflicts with the requested session",
@@ -225,6 +240,16 @@ impl AcpxProviderSessionIdentity {
         }) {
             return Err(LocalRunnerError::invalid(
                 "ACPX identity contains invalid Claude effort",
+            ));
+        }
+        if self.grok_effort.as_ref().is_some_and(|effort| {
+            !matches!(
+                effort.as_str(),
+                "minimal" | "low" | "medium" | "high" | "xhigh"
+            )
+        }) {
+            return Err(LocalRunnerError::invalid(
+                "ACPX identity contains invalid Grok effort",
             ));
         }
         for (value, label) in [
@@ -1336,6 +1361,9 @@ fn session_open_params(config: &AcpxProviderSessionConfig, sidecar_tools: &[Valu
     if let Some(effort) = &config.claude_effort {
         params["claudeEffort"] = json!(effort);
     }
+    if let Some(effort) = &config.grok_effort {
+        params["grokEffort"] = json!(effort);
+    }
     if let Some(level) = config.pi_thinking_level {
         params["piThinkingLevel"] = json!(level);
     }
@@ -1454,6 +1482,7 @@ fn verify_open_response(
         || identity.mode != config.mode
         || identity.pi_thinking_level != config.pi_thinking_level
         || identity.claude_effort != config.claude_effort
+        || identity.grok_effort != config.grok_effort
         || config
             .expected_identity
             .as_ref()
@@ -1789,6 +1818,7 @@ mod mode_tests {
             mode: Some("plan".to_owned()),
             pi_thinking_level: None,
             claude_effort: None,
+            grok_effort: None,
             permission_mode_pinned: true,
             provider_policy: Some(AcpxProviderRuntimePolicy { read_only: false }),
             system_instructions: String::new(),
@@ -1817,6 +1847,7 @@ mod mode_tests {
             mode: Some("plan".to_owned()),
             pi_thinking_level: None,
             claude_effort: None,
+            grok_effort: None,
             provider_lifetime_fence_candidates: [60_001, 60_002, 60_003],
         }
     }
@@ -1974,6 +2005,23 @@ mod mode_tests {
         cfg.agent = "codex".to_owned();
         assert!(cfg.validate().is_err());
         cfg.claude_effort = None;
+        cfg.validate().unwrap();
+    }
+    #[test]
+    fn grok_effort_is_explicit_grok_only_and_forwarded_without_clamping() {
+        let mut cfg = config();
+        cfg.agent = "grok".to_owned();
+        for effort in ["minimal", "low", "medium", "high", "xhigh"] {
+            cfg.grok_effort = Some(effort.to_owned());
+            cfg.validate().unwrap();
+            assert_eq!(session_open_params(&cfg, &[])["grokEffort"], json!(effort));
+        }
+        cfg.grok_effort = Some("ultra".to_owned());
+        assert!(cfg.validate().is_err());
+        cfg.grok_effort = Some("high".to_owned());
+        cfg.agent = "codex".to_owned();
+        assert!(cfg.validate().is_err());
+        cfg.grok_effort = None;
         cfg.validate().unwrap();
     }
 

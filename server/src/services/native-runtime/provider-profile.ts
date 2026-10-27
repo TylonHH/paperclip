@@ -1,5 +1,5 @@
 import { agentHarnessType, normalizeClaudeRunnerOptions } from "@paperclipai/shared";
-import { resolveClaudeEffort, resolveQualifiedAcpxProfile } from "../../vendor/paperclip-runner/index.js";
+import { resolveClaudeEffort, resolveGrokEffort, resolveQualifiedAcpxProfile } from "../../vendor/paperclip-runner/index.js";
 import {
   isPaperclipRunnerProvider,
   PAPERCLIP_RUNNER_PERMISSION_CAPABILITIES,
@@ -140,6 +140,7 @@ export type PaperclipRunnerNativeProviderInput =
       acpxSessionMode?: "agent" | "plan" | "ask";
       piThinkingLevel?: "off" | "low" | "high" | "max";
       claudeEffort?: "low" | "medium" | "high" | "xhigh" | "max";
+      grokEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
     };
 
 export class PaperclipRunnerProviderProfileError extends Error {
@@ -445,6 +446,9 @@ export function resolvePaperclipRunnerProviderProfile(
   try { if (candidate === "acpx" && agentHarnessType("paperclip_runner", config) === "claude_local") resolveClaudeEffort("claude", config.modelReasoningEffort ?? config.reasoningEffort ?? config.effort); } catch (error) {
     throw new PaperclipRunnerProviderProfileError("paperclip_runner_claude_effort_invalid", error instanceof Error ? error.message : "Invalid Claude effort");
   }
+  try { if (candidate === "acpx" && config.acpxAgent === "grok") resolveGrokEffort("grok", config.modelReasoningEffort ?? config.reasoningEffort ?? config.effort); } catch (error) {
+    throw new PaperclipRunnerProviderProfileError("paperclip_runner_grok_effort_invalid", error instanceof Error ? error.message : "Invalid Grok effort");
+  }
   try { resolvePaperclipRunnerPiThinkingLevel(candidate, config.acpxAgent, config.piThinkingLevel); } catch (error) {
     throw new PaperclipRunnerProviderProfileError("paperclip_runner_pi_thinking_invalid", error instanceof Error ? error.message : "Invalid Pi thinking level");
   }
@@ -661,6 +665,7 @@ export function resolvePaperclipRunnerNativeProviderInput(input: {
       model: profile.model,
       acpxAgent: profile.acpxAgent,
       ...(profile.acpxAgent === "claude" ? { claudeEffort: resolveClaudeEffort("claude", config.modelReasoningEffort ?? config.reasoningEffort ?? config.effort) } : {}),
+      ...(profile.acpxAgent === "grok" ? { grokEffort: resolveGrokEffort("grok", config.modelReasoningEffort ?? config.reasoningEffort ?? config.effort) } : {}),
       ...(profile.acpxAgent === "pi" ? { piThinkingLevel: resolvePaperclipRunnerPiThinkingLevel("acpx", "pi", config.piThinkingLevel) } : {}),
       ...(profile.acpxAgent === "cursor" ? {
         acpxSessionMode: resolvePaperclipRunnerCursorMode("acpx", "cursor", config.acpxSessionMode),

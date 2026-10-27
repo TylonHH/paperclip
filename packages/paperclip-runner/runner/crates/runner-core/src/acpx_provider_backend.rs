@@ -145,6 +145,8 @@ struct AcpxProviderDescriptor {
     pi_thinking_level: Option<PiThinkingLevel>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     claude_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    grok_effort: Option<String>,
     permission_mode_pinned: bool,
     #[serde(default)]
     provider_policy: Option<AcpxProviderRuntimePolicy>,
@@ -273,6 +275,13 @@ impl AcpxProviderDescriptor {
                 self.agent != "claude"
                     || !matches!(effort.as_str(), "low" | "medium" | "high" | "xhigh" | "max")
             })
+            || self.grok_effort.as_ref().is_some_and(|effort| {
+                self.agent != "grok"
+                    || !matches!(
+                        effort.as_str(),
+                        "minimal" | "low" | "medium" | "high" | "xhigh"
+                    )
+            })
             || self.mode.as_ref().is_some_and(|mode| {
                 mode.trim().is_empty()
                     || mode.chars().count() > 240
@@ -375,6 +384,7 @@ impl AcpxProviderDescriptor {
             mode: self.mode.clone(),
             pi_thinking_level: self.pi_thinking_level,
             claude_effort: self.claude_effort.clone(),
+            grok_effort: self.grok_effort.clone(),
             permission_mode_pinned: self.permission_mode_pinned,
             provider_policy: self.provider_policy.clone(),
             system_instructions: self.instructions.clone(),
@@ -481,6 +491,9 @@ impl AcpxProviderDescriptor {
         });
         if let Some(effort) = &self.claude_effort {
             descriptor["claudeEffort"] = json!(effort);
+        }
+        if let Some(effort) = &self.grok_effort {
+            descriptor["grokEffort"] = json!(effort);
         }
         if let Some(level) = self.pi_thinking_level {
             descriptor["piThinkingLevel"] = json!(level);
@@ -622,6 +635,7 @@ impl AcpxDurableState {
                 || identity.mode != self.descriptor.mode
                 || identity.pi_thinking_level != self.descriptor.pi_thinking_level
                 || identity.claude_effort != self.descriptor.claude_effort
+                || identity.grok_effort != self.descriptor.grok_effort
             {
                 return Err(DurableRunnerError::invalid(
                     "ACPX durable identity no longer matches its qualified profile or provider mode",
@@ -1308,6 +1322,9 @@ impl AcpxCommandExecutor {
         });
         if let Some(effort) = &identity.claude_effort {
             result["claudeEffort"] = json!(effort);
+        }
+        if let Some(effort) = &identity.grok_effort {
+            result["grokEffort"] = json!(effort);
         }
         if let Some(level) = identity.pi_thinking_level {
             // This identity is admitted only after the sidecar's effective-mode ACK.
@@ -2783,6 +2800,7 @@ mod tests {
                 mode: descriptor.mode.clone(),
                 pi_thinking_level: descriptor.pi_thinking_level,
                 claude_effort: descriptor.claude_effort.clone(),
+                grok_effort: descriptor.grok_effort.clone(),
                 provider_lifetime_fence_candidates: [60_001, 60_002, 60_003],
             };
             let operations = Vec::new();
@@ -3060,6 +3078,7 @@ mod tests {
             mode: None,
             pi_thinking_level: None,
             claude_effort: None,
+            grok_effort: None,
             provider_lifetime_fence_candidates: [60_001, 60_002, 60_003],
         };
 
@@ -3550,6 +3569,7 @@ mod tests {
             mode: original_descriptor.mode.clone(),
             pi_thinking_level: original_descriptor.pi_thinking_level,
             claude_effort: original_descriptor.claude_effort.clone(),
+            grok_effort: original_descriptor.grok_effort.clone(),
             provider_lifetime_fence_candidates: [60_001, 60_002, 60_003],
         };
         let operations = Vec::new();
@@ -3836,6 +3856,7 @@ mod tests {
             mode: original_descriptor.mode.clone(),
             pi_thinking_level: original_descriptor.pi_thinking_level,
             claude_effort: original_descriptor.claude_effort.clone(),
+            grok_effort: original_descriptor.grok_effort.clone(),
             provider_lifetime_fence_candidates: [60_001, 60_002, 60_003],
         };
         let operations = Vec::new();
@@ -4155,6 +4176,7 @@ mod tests {
             mode: original_descriptor.mode.clone(),
             pi_thinking_level: None,
             claude_effort: None,
+            grok_effort: None,
             provider_lifetime_fence_candidates: [60_001, 60_002, 60_003],
         };
         let operations = Vec::new();
@@ -4404,6 +4426,7 @@ mod tests {
             mode: descriptor.mode.clone(),
             pi_thinking_level: descriptor.pi_thinking_level,
             claude_effort: descriptor.claude_effort.clone(),
+            grok_effort: descriptor.grok_effort.clone(),
             provider_lifetime_fence_candidates,
         };
         let operations = Vec::new();
@@ -4578,6 +4601,7 @@ mod tests {
             mode: provider_descriptor.mode.clone(),
             pi_thinking_level: provider_descriptor.pi_thinking_level,
             claude_effort: provider_descriptor.claude_effort.clone(),
+            grok_effort: provider_descriptor.grok_effort.clone(),
             provider_lifetime_fence_candidates,
         });
         state.provider_exit_unconfirmed = true;

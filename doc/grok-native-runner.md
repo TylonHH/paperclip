@@ -2,14 +2,26 @@
 
 Select **Grok Build** in the native runner provider selector. The stored contract is
 `adapterType: "paperclip_runner"` with `provider: "acpx"`, `acpxAgent: "grok"`,
-and `model: "grok-4.7"`. Existing `grok_local` agents keep their legacy adapter.
+and `model: "grok-4.7"`. Existing `grok_local` agents keep their legacy adapter
+until an explicit upgrade. On a qualified macOS ARM64 or Linux x64 computer,
+**Harness / Runtime → Upgrade runner** preserves the agent, model, account,
+instructions, and history. It starts fresh execution sessions. Advanced also
+offers an explicit Runner choice. Unsupported legacy settings are rejected
+before saving; select compatible settings or keep Legacy.
 New Grok runner agents default to **Full auto (approve all)**
 (`acpxPermissionMode: "approve-all"`) in setup and the configuration form.
 API configurations that omit the permission mode use the same default. No
 additional permission setting is needed for unattended execution. Explicitly
 saved restrictions remain unchanged.
-On Cloud, an operator must enable `enableNativeRunner` for the instance before
-the new-agent picker or direct setup page offers the native runner.
+Grok Build's qualified harness does not require the `enableNativeRunner` flag.
+
+Explicit thinking effort uses `reasoningEffort` (`minimal`, `low`, `medium`,
+`high`, or `xhigh`). The immutable v10 execution input, provider descriptor,
+and recovery identity bind this value as `grokEffort`. Before a prompt, the
+Runner applies ACP `reasoning_effort` and requires Grok to acknowledge the exact
+value. Missing configuration, a rejected value, or effort drift stops admission.
+Omitting effort retains Grok's provider default. This setting remains outside
+the model-visible task prompt. Historical execution inputs retain their schemas.
 
 Grok Build speaks [ACP over stdio](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-pager/docs/user-guide/15-agent-mode.md).
 The runner owns `grok agent --no-leader stdio` through ACPX, including session

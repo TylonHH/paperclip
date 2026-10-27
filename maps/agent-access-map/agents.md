@@ -139,7 +139,7 @@ environment, and consent checks as other edits. It adds no agent permission or
 credential fallback. Pool and externally managed agents use their existing
 configuration surfaces. Board browser verification does not qualify agent access.
 
-The existing-agent upgrade notice uses this configuration PATCH. It does not
+The existing-agent upgrade notice for Claude, Codex, and Grok Build uses this configuration PATCH. It does not
 grant configuration, account, or environment access. The server resolves the
 saved settings under normal company/configuration authorization. Obsolete Claude
 tuning fields are removed with `configurationWarnings`; security incompatibilities

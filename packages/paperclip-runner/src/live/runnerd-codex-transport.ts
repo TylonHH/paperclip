@@ -8,6 +8,7 @@ import type { RunnerExecutionDriver } from "../control-plane/runner-execution-dr
 import { resolvePinnedOpenCodeCommand } from "../drivers/opencode/opencode-server-driver.js";
 import { ACPX_CAPABILITY_PROFILES } from "../drivers/acpx/capability-profiles.js";
 import { resolveClaudeEffort, admittedClaudeEffort } from "../drivers/acpx/claude-effort.js";
+import { resolveGrokEffort, admittedGrokEffort } from "../drivers/acpx/grok-effort.js";
 import { admittedPiThinkingLevel, resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
 import { configuredEnvironment } from "../configured-environment.js";
 import { githubCredentialEnvironment } from "../github-credential-environment.js";
@@ -1213,6 +1214,7 @@ export interface CapabilityRunnerdProcessEvidence {
   /** Effective native mode, populated only from the admitted Pi identity. */
   piThinkingLevel?: "off" | "low" | "high" | "max";
   claudeEffort?: "low" | "medium" | "high" | "xhigh" | "max";
+  grokEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   providerVersion: string | null;
   acpxAgent: QualifiedAcpxAgent | null;
   agentServerVersion: string | null;
@@ -1242,6 +1244,7 @@ export interface CapabilityRunnerdCodexTransportOptions extends RunnerExecutionD
   acpxMode?: string;
   piThinkingLevel?: "off" | "low" | "high" | "max";
   claudeEffort?: "low" | "medium" | "high" | "xhigh" | "max";
+  grokEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   acpxPermissionModePinned?: boolean;
   acpxSidecarPath?: string;
   /** SHA-256 verified by the provider-pack authority before runner startup. */
@@ -3601,6 +3604,7 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
       throw new Error("runner_launch_preparation_requires_process_owner_and_artifact");
     }
     resolveClaudeEffort(options.provider === "acpx" ? options.acpxAgent ?? "codex" : "", options.claudeEffort);
+    resolveGrokEffort(options.provider === "acpx" ? options.acpxAgent ?? "codex" : "", options.grokEffort);
     resolvePiThinkingLevel(options.provider === "acpx" ? options.acpxAgent ?? "codex" : "", options.piThinkingLevel);
     if (options.acpxMode !== undefined && options.provider !== "acpx") {
       throw new Error("acpxMode requires the ACPX provider");
@@ -6766,7 +6770,9 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
         throw new Error("ACPX capability identity differs from the admitted profile");
       }
       const claudeEffort = admittedClaudeEffort(this.options.acpxAgent ?? "codex", this.options.claudeEffort, descriptor, providerIdentity);
+      const grokEffort = admittedGrokEffort(this.options.acpxAgent ?? "codex", this.options.grokEffort, descriptor, providerIdentity);
       if (claudeEffort !== undefined) this.#evidence.claudeEffort = claudeEffort;
+      if (grokEffort !== undefined) this.#evidence.grokEffort = grokEffort;
       const piThinkingLevel = admittedPiThinkingLevel(this.options.acpxAgent ?? "codex", this.options.piThinkingLevel, descriptor, providerIdentity);
       if (piThinkingLevel !== undefined) this.#evidence.piThinkingLevel = piThinkingLevel;
       this.#turnControls = parseAcpxTurnControlCapabilities(descriptor.turnControls, descriptor.agent);

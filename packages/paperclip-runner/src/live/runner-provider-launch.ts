@@ -23,7 +23,7 @@ export interface RunnerProviderLaunchRequirements {
   includeCollaborationModeInstructions: boolean;
   settings: Pick<CapabilityRunnerdCodexTransportOptions,
     "acpxAgent" | "acpxMode" | "acpxPermissionMode" | "acpxPermissionModePinned" |
-    "piThinkingLevel" | "claudeEffort" | "managedProfile" | "agentCoreProfile" | "opencodePermissionMode" | "disableCodexWebSearch">;
+    "piThinkingLevel" | "claudeEffort" | "grokEffort" | "managedProfile" | "agentCoreProfile" | "opencodePermissionMode" | "disableCodexWebSearch">;
   instructions: string;
   runtimeContext: NativeRuntimeContextSnapshot | null;
 }
@@ -56,7 +56,7 @@ export function runnerProviderLaunchRequirements(
       acpxAgent: options.acpxAgent, acpxMode: options.acpxMode,
       acpxPermissionMode: options.acpxPermissionMode,
       acpxPermissionModePinned: options.acpxPermissionModePinned,
-      piThinkingLevel: options.piThinkingLevel, claudeEffort: options.claudeEffort,
+      piThinkingLevel: options.piThinkingLevel, claudeEffort: options.claudeEffort, grokEffort: options.grokEffort,
       managedProfile: options.managedProfile, agentCoreProfile: options.agentCoreProfile,
       opencodePermissionMode: options.opencodePermissionMode,
       ...(options.disableCodexWebSearch === true ? { disableCodexWebSearch: true } : {}),
@@ -246,6 +246,7 @@ export function createRunnerProviderLaunch(
               ...(selectedAcpxMode === undefined ? {} : { mode: selectedAcpxMode }),
               ...(acpxProfile!.agent === "pi" ? { piThinkingLevel: settings.piThinkingLevel } : {}),
               ...(acpxProfile!.agent === "claude" && settings.claudeEffort ? { claudeEffort: settings.claudeEffort } : {}),
+              ...(acpxProfile!.agent === "grok" && settings.grokEffort ? { grokEffort: settings.grokEffort } : {}),
               permissionMode: resolveRunnerdAcpxPermissionMode(
                 settings.acpxPermissionMode,
               ),

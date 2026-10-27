@@ -167,7 +167,7 @@ Selecting another runner must not silently discard security settings or change a
 recorded execution. Keep runner choice in Advanced and verify the next eligible
 run separately from historical transcripts.
 
-Existing legacy Claude and Codex agents on qualified default environments, or
+Existing legacy Claude, Codex, and Grok Build agents on qualified default environments, or
 probe-capable Daytona snapshots / immutable sandbox images, show **Upgrade runner** above their configuration. Verify a company owner with `agents:configure` and no instance-admin role can qualify the saved computer and upgrade. A caller without configuration permission must be denied before a probe starts. Exercise that action with
 pending edits and an environment-variable draft. An unsaved change to a different
 effective computer must disable the action and explain that the computer change
