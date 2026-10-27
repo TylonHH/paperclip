@@ -97,6 +97,13 @@ pending. An already queued authoritative result is replayed without resolving
 its business outcome again. Failed or unknown outcomes retain the existing
 reconciliation and authority rules.
 
+Pending completion inputs (`paperclip_finish` and `paperclip_block`) use the
+driver's existing completion handler even when its caller supplies no recovery
+lookup for ordinary tools. Codex transport waits for both authenticated startup
+and handler installation; the external driver waits for session opening.
+An ordinary tool with no outcome lookup remains held. Reconciliation does not
+turn a missing lookup into permission to repeat that tool.
+
 A rejected persistence callback closes the current connection and keeps the last
 successful revision. A later flush or reconnect retries from a complete checkpoint,
 including when the failed response hid a successful commit. Queued writes also
