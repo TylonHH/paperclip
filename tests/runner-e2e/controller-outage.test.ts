@@ -17,6 +17,28 @@ function fixture() {
 }
 
 describe("controller outage qualification", () => {
+  it("keeps original-execution fault evidence enabled for both dedicated continuity cells", async () => {
+    const executions = selectRunnerExecutions(parseRunnerSelectors(["--suite", "daytona-restart-continuity"]));
+    expect(executions).toHaveLength(2);
+    for (const execution of executions) {
+      const outage = controllerOutageForExecution(execution, {});
+      expect(outage).toEqual({ signal: "SIGKILL", holdMs: 125_000 });
+      expect(controllerOutageForExecution(execution, { PAPERCLIP_RUNNER_E2E_CONTROLLER_OUTAGE_MS: "300000" }))
+        .toEqual({ signal: "SIGKILL", holdMs: 300_000 });
+      expect(() => controllerOutageForExecution(execution, { PAPERCLIP_RUNNER_E2E_CONTROLLER_OUTAGE_MS: "1000" }))
+        .toThrow("shorter than the dedicated continuity contract");
+    }
+  });
+
+  it("uses the everyday suite's declared default while retaining explicit short profiles", () => {
+    const [execution] = selectRunnerExecutions(parseRunnerSelectors([
+      "--id", "everyday-workflows.runner-codex.daytona.recover-controller",
+    ]));
+    expect(controllerOutageForExecution(execution!, {})).toEqual({ signal: "SIGKILL", holdMs: 125_000 });
+    expect(controllerOutageForExecution(execution!, { PAPERCLIP_RUNNER_E2E_CONTROLLER_OUTAGE_MS: "1000" }))
+      .toEqual({ signal: "SIGKILL", holdMs: 1_000 });
+  });
+
   it.each(["runner-codex", "runner-acpx-claude"])("supplies replacement fault evidence to the %s Daytona restart cell", async profile => {
     const [execution] = selectRunnerExecutions(parseRunnerSelectors([
       "--id", `everyday-workflows.${profile}.daytona.recover-controller`,
