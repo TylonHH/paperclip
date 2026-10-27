@@ -1007,7 +1007,9 @@ export async function claimNativeRestartRecoveries(input: {
         .set({
           phase: "observed",
           leaseOwner,
-          leaseExpiresAt: new Date(now.getTime() + (durableAuthority ? REMOTE_CONTROLLER_LEASE_MS : 20 * 60_000)),
+          // Cleanup and earlier candidates can outlive the batch observation.
+          // The owner row is locked: grant the full lease at this write.
+          leaseExpiresAt: sql`clock_timestamp() + ${durableAuthority ? REMOTE_CONTROLLER_LEASE_MS : 20 * 60_000} * interval '1 millisecond'`,
           controllerBootId: controller.bootId,
           controllerPid: controller.pid,
           controllerProcessStartedAt: controller.processStartedAt,

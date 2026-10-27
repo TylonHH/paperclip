@@ -1142,3 +1142,19 @@ local, legacy and Stop cells retain their prior behavior. All 108 affected
 qualification tests and the runner E2E typecheck pass. This is selection and
 receipt-contract proof with injected supervisor operations, not a new hosted
 Claude qualification.
+
+Late review also reproduces a fresh remote claim whose lease is already 30
+seconds expired because cleanup/candidate work consumed the captured batch time.
+Claims now calculate their deadline with the database clock in the existing
+UPDATE, after the owner row is locked; no query is added. The real-Postgres
+regression passes together with three natural renewal/preparation cases,
+including the 90-second pool-delay case. Server typecheck passes. These are
+deadline and ownership tests, not a simulated deployment qualification.
+
+Both Agent Detail variants reproduce a disabled history-paging button after
+visibility aborts an in-flight manual page read. Resetting that read's loading
+state preserves the retained cursor and rejects its late response. Both
+regressions fail first; all 28 affected history/visibility tests and UI token
+gates pass. CI attempts on the preceding heads also lose several runner services
+at the same timestamp; those shutdown/cancellation logs remain in the evidence
+and are not reported as assertion failures or passing jobs.
