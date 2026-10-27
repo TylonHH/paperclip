@@ -1102,3 +1102,32 @@ an unrelated view changed its interests. The reproducer fails first; all 19
 server delivery/browser-interest tests then pass. The original congestion
 deadline remains active until the browser is told to catch up. This changes
 presentation recovery only; it has no checkpoint, execution or accounting effect.
+
+### Completion-only recovery review (2026-10-27)
+
+A later Paperclip review identifies completion inputs that would remain pending
+when a standalone caller omits its ordinary-tool outcome lookup. Runner
+correction `bcc0785946` wires completion recovery independently in both the
+Codex transport and shared external driver. The three restart regressions fail
+before their respective corrections and pass afterward, covering both handler
+startup orders and an external runner with no ordinary-tool callback. Unknown
+ordinary tools remain held. Candidate v66 attestation bytes remain frozen; v67
+binds the changed bridge and compatibility declaration without redefining v66.
+
+The controller/attestation lane passes 230 tests. The rebuilt full
+Codex/Dot/Muse run passes 326 cases and times out one existing mid-goal adoption
+case at 30 seconds. That case passes its isolated retry, then the complete Codex
+transport file passes all 302 cases on unchanged source and binaries. The
+one-process fixture separately passes all three cases. Conformance and replay
+parity pass. The initial timeout remains evidence; these retries do not establish
+its root cause or qualify a hosted harness.
+
+CI of the preceding successor heads also reports a login-cleanup idle-work
+assertion and an unrecoverable runner close in the timeout-attachment fixture.
+Both lie outside this completion correction. The unchanged login-cleanup file
+passes all 16 cases against a fresh owned database. The close case passes in the
+full 302-case local repeat. Those CI failures remain recorded and fresh
+current-head CI is required; an isolated pass does not turn an earlier job green.
+The runner-only local API-authority check passes 2,027 cases but its 47 real HTTP
+cases cannot initialize embedded Postgres on this Mac. The integrated server's
+owned-database HTTP path is verified separately.
