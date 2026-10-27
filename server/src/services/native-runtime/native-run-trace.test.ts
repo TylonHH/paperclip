@@ -67,6 +67,25 @@ function createRecordingTraceContext(): {
 }
 
 describe("native runner performance trace", () => {
+  it("projects a full durable diagnostic batch without waiting on duplicate run-log writes", async () => {
+    const {traceContext, spans}=createRecordingTraceContext();
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release=resolve; });
+    const write=vi.fn(async()=>barrier);
+    const trace=createNativeRunTrace({runId:"provider-perf-blocked-log",startedAtMs:1000,traceContext,onEvent:write});
+    const names=["provider.model.stream","provider.context.environment","provider.tools.resolve","provider.model.resolve",
+      "provider.workspace.snapshot.track","provider.workspace.snapshot.patch","provider.workspace.snapshot.diff","provider.skills.discovery"];
+    let completed=false;
+    const work=recordNativeProviderPerformanceSpans(trace,Array.from({length:128},(_,index)=>({
+      name:names[index%names.length],startedAtMs:1100+index,endedAtMs:1200+index,
+    }))).then(()=>{completed=true;});
+    try {
+      await new Promise<void>(resolve=>setImmediate(resolve));
+      expect(completed).toBe(true);
+      expect(write).not.toHaveBeenCalled();
+      expect(spans.filter(span=>span.parentName==="provider.runtime")).toHaveLength(128);
+    } finally {release();await work;await trace.finish("ok");}
+  });
   it("groups normalized provider phases under their real native execution parent", async () => {
     const {traceContext, spans}=createRecordingTraceContext();
     const trace=createNativeRunTrace({runId:"provider-perf",startedAtMs:1000,traceContext});

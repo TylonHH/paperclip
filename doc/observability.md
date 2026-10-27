@@ -324,30 +324,6 @@ attempt or owning phase:
 | `skills.cache.acquire`, `skills.rows`, `skills.version.read`, `skills.repository.read`, `skills.version.materialize`, `skills.version.verify` | Dedicated connection/transaction startup plus advisory-lock acquisition, authorized skill rows, frozen version and repository reads, and exact runtime materialization/validation. Lock acquisition ends before the protected work; version verification is inside materialization. Only bounded file counts are added. |
 | `skills.consume` | The caller's delivery and durable version-pinning callback while the cache lock remains held. |
 
-For bounded native OpenCode diagnosis, set
-`PAPERCLIP_OPENCODE_PERFORMANCE_DIAGNOSTICS=1` in the explicit Runner environment.
-It defaults off. The Runner creates an authenticated loopback OTLP sink and enables
-the pinned OpenCode runtime's internal tracing. The sink discards logs, resource
-attributes, span attributes, events, and unknown span names. It retains only closed
-phase names, wall timestamps, and success/failure, with a 1 MiB request limit,
-128 retained measurements, and 16 measurements per phase. No operator OTLP endpoint
-or ingestion credential is passed to OpenCode.
-
-Available phases cover context/instruction loading, skill discovery, tool and model
-resolution, model streaming (`ai.streamText`, including stream consumption), Git
-discovery/default branch, snapshots, dependency installation, and plugin startup.
-These intervals overlap; do not sum them as elapsed time. At each terminal turn,
-already-received measurements travel in one `harness.diagnostic` event through the
-existing durable PRP channel. Late exports may be absent; collection never waits
-for a provider flush or delays terminal publication to complete the diagnostic.
-Late spans from a prior completed turn are discarded at the next boundary.
-
-The server validates the closed fields again and records them under a foldable
-`provider.runtime` group inside `native.session.execute`. The normal operator
-endpoint gate controls Honeycomb export. Without an endpoint, the diagnostic and
-its measured phase events stay in the instance run log. Raw OpenCode OTLP must
-never be sent directly to the operator endpoint: it can contain prompts and
-authorization attributes before the loopback sink removes them.
 | `workspace_sync.prepare_host_current`, `.prepare_durable_seed`, `.prepare_adopt_remote` | Runtime preparation under the selected inbound mode, including snapshot and staging work. A warm mismatch may produce a second preparation; it is real repeated work. |
 | `workspace_sync.source_root`, `.repositories`, `.ignore_rules`, `.snapshot_git`, `.snapshot_baseline` | Physical source capture, managed repositories, ignore rules, Git metadata and baseline content snapshot. |
 | `workspace_sync.pack`, `.git_clone`, `.git_archive`, `.overlay_copy`, `.overlay_archive`, `.deleted_manifest` | Temporary shallow Git clone, its archive callback, selected working-tree overlay copy/archive, and the deleted-file manifest. The archive is inside the clone's lifetime; do not sum parent and child. |
@@ -368,6 +344,32 @@ authorization attributes before the loopback sink removes them.
 | `completion.*` | Completion handler, run-log finalization, terminal persistence, accounting, liveness, and continuation summaries. |
 | `response.resolve`, `.authorize`, `.add_comment`, `.transaction*`, `.row_lock`, `.write`, `.publish` | Response selection, existing authorization, comment transaction including commit or rollback, row wait, insert, and external publication enqueue. |
 | `execution.realtime` | Synchronous live-event and plugin publication dispatch. It does not measure browser receipt or paint. |
+
+For bounded native OpenCode diagnosis, set
+`PAPERCLIP_OPENCODE_PERFORMANCE_DIAGNOSTICS=1` in the explicit Runner environment.
+It defaults off. The Runner creates an authenticated loopback OTLP sink and enables
+the pinned OpenCode runtime's internal tracing. The sink discards logs, resource
+attributes, span attributes, events, and unknown span names. It retains only closed
+phase names, wall timestamps, and success/failure, with a 1 MiB request limit,
+128 retained measurements, and 16 measurements per phase. No operator OTLP endpoint
+or ingestion credential is passed to OpenCode.
+
+Available phases cover context/instruction loading, skill discovery, tool and model
+resolution, model streaming (`ai.streamText`, including stream consumption), Git
+discovery/default branch, snapshots, dependency installation, and plugin startup.
+These intervals overlap; do not sum them as elapsed time. At each terminal turn,
+already-received measurements travel in one `harness.diagnostic` event through the
+existing durable PRP channel. Late exports may be absent; collection never waits
+for a provider flush or delays terminal publication to complete the diagnostic.
+Late spans from a prior completed turn are discarded at the next boundary.
+
+The server validates the closed fields again and records them under a foldable
+`provider.runtime` group inside `native.session.execute`. The normal operator
+endpoint gate controls Honeycomb export. The single diagnostic batch stays in the instance run log. Its OTel projection
+does not write duplicate phase rows or await additional database work before
+terminal consumption. Without an endpoint, no provider child spans are exported. Raw OpenCode OTLP must
+never be sent directly to the operator endpoint: it can contain prompts and
+authorization attributes before the loopback sink removes them.
 
 Detail phases emit at most 16 spans of each name per attempt. Larger receipt and
 asset inventories continue under the containing group without unbounded per-row
