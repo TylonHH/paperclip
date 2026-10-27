@@ -35,6 +35,13 @@ maintains as a dependency; once you install the packages below, they become
 normal dependencies of **your own** project, and your own Dependabot updates
 them.
 
+An initialized SDK does not confirm ingestion. Verify a fresh trace from the
+deployed revision at the configured destination. A rejected export can leave
+the application healthy. For Honeycomb, configure the ingest key in the
+`x-honeycomb-team` entry of `OTEL_EXPORTER_OTLP_HEADERS`; see
+[Honeycomb authentication](https://docs.honeycomb.io/api/query-annotations/authorization).
+Keep credential values out of logs and diagnostic reports.
+
 ## Budget admission, accounting, and enforcement
 
 The operator-gated `paperclip.budgets` tracer records
@@ -313,6 +320,9 @@ attempt or owning phase:
 | `runtime_selection.*` | Completion contracts, session/recovery reads, profiles, interaction materialization, backend discovery, bootstrap, run/coordinator writes, transaction entry/settlement, and workspace synchronization. |
 | `runtime_context.instructions`, `.skills`, `.mcp` | The three concurrent runtime-context branches. Their durations overlap. |
 | `runtime_context.asset_*` | Source reads, manifest hashing, cache lookup, cold materialization, and exact file verification on cold and warm paths. |
+| `skills.inventory`, `.wait`, `.bundled`, `.releases`, `.folders`, `.local_sources` | Company skill reconciliation, waiting for an existing company refresh, and its bundled imports, release verification, folder, and local-source work beneath runtime skill preparation. Inventory children overlap their parent. |
+| `skills.cache.acquire`, `skills.rows`, `skills.version.read`, `skills.repository.read`, `skills.version.materialize`, `skills.version.verify` | Dedicated connection/transaction startup plus advisory-lock acquisition, authorized skill rows, frozen version and repository reads, and exact runtime materialization/validation. Lock acquisition ends before the protected work; version verification is inside materialization. Only bounded file counts are added. |
+| `skills.consume` | The caller's delivery and durable version-pinning callback while the cache lock remains held. |
 | `workspace_sync.prepare_host_current`, `.prepare_durable_seed`, `.prepare_adopt_remote` | Runtime preparation under the selected inbound mode, including snapshot and staging work. A warm mismatch may produce a second preparation; it is real repeated work. |
 | `workspace_sync.source_root`, `.repositories`, `.ignore_rules`, `.snapshot_git`, `.snapshot_baseline` | Physical source capture, managed repositories, ignore rules, Git metadata and baseline content snapshot. |
 | `workspace_sync.pack`, `.git_clone`, `.git_archive`, `.overlay_copy`, `.overlay_archive`, `.deleted_manifest` | Temporary shallow Git clone, its archive callback, selected working-tree overlay copy/archive, and the deleted-file manifest. The archive is inside the clone's lifetime; do not sum parent and child. |
@@ -1953,6 +1963,12 @@ Preparation failures emit a failed span even when no native session starts.
 It carries no skill contents, identifiers, locations, or credentials. It uses the
 existing run performance events and operator-configured OpenTelemetry endpoint;
 no first-party Telemetry event is added.
+
+The `skills.*` detail spans above distinguish inventory reconciliation and lock
+acquisition from repository transfer and file validation. A repository-backed
+skill's authored `SKILL.md` is not its complete runtime payload: the generated
+discovery entrypoint includes the pinned repository under `.paperclip-repository`.
+Measure the delivered bundle's file count and bytes when reproducing its cost.
 
 Runtime preparation refreshes the company inventory once per listing. Local and
 catalog directories remain direct sources, so edits are visible on the next
