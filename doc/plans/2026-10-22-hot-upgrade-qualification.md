@@ -1169,8 +1169,9 @@ catalog definition advances to version 10. Both new policy cases fail first;
 all 149 relevant qualification tests and the runner E2E typecheck pass.
 
 A broader catalog invocation additionally finds existing model-account coverage
-drift already present in master `663fe667d6`, and a sandbox-denied report CLI
-fixture. Those failures remain in the evidence; the permitted report-catalog
+drift already present in master `663fe667d6`, and a report CLI fixture that did
+not produce its output in the sandbox. Those failures remain in the evidence;
+the permitted report-catalog
 retry passes all 15 cases. They do not alter the continuity acceptance contract.
 
 Transcript rows now use their run/sequence identity in both Agent Detail
