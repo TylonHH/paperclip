@@ -12,7 +12,7 @@ import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-ho
 import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { eq, sql } from "drizzle-orm";
-import { agents, authUsers, companyMemberships, companySkillSources, heartbeatRuns, projects, projectSkillSources,
+import { authUsers, companyMemberships, companySkillSources, heartbeatRuns, projects, projectSkillSources,
   companies, companySkills, companySkillVersions, companySkillRepositorySnapshots,
   applyPendingMigrations, closeRegisteredClients, createDb, startEmbeddedPostgresTestDatabase } from "../../packages/db/src/index.js";
 import type { CompanySkillVersionFileInventoryEntry } from "@paperclipai/shared";
@@ -30,9 +30,11 @@ const operatorEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 delete process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
 let companySkillService: typeof import("../src/services/company-skills.js").companySkillService;
 let withSkillActor: typeof import("../src/services/skill-access.js").withSkillActor;
+let createAgentLifecycle: typeof import("../src/services/agent-lifecycle.js").createAgentLifecycle;
 try {
   ({ companySkillService } = await import("../src/services/company-skills.js"));
   ({ withSkillActor } = await import("../src/services/skill-access.js"));
+  ({ createAgentLifecycle } = await import("../src/services/agent-lifecycle.js"));
 }
 finally {
   if (operatorEndpoint !== undefined) process.env.OTEL_EXPORTER_OTLP_ENDPOINT = operatorEndpoint;
@@ -159,7 +161,9 @@ try {
   db.$client.options.debug = () => { rootPoolQueries++; };
   await db.insert(companies).values({ id: companyId, name: "Native preparation benchmark", issuePrefix: "BENCH" });
   if (authenticated) {
-    await db.insert(agents).values({ id: agentId, companyId, name: "Diagnostic reader", adapterType: "paperclip_runner" });
+    await createAgentLifecycle(db).requestHire(companyId, {
+      id: agentId, name: "Diagnostic reader", adapterType: "paperclip_runner", status: "paused",
+    }, { runnerResolved: true });
     await db.insert(authUsers).values({ id: userId, name: "Diagnostic owner", email: `${userId}@example.invalid`, createdAt: new Date(), updatedAt: new Date() });
     await db.insert(companyMemberships).values([
       { companyId, principalType: "agent", principalId: agentId, membershipRole: "member" },
