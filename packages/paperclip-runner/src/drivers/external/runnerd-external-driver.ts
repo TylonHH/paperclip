@@ -217,9 +217,9 @@ class RunnerdExternalSession implements HarnessSession {
         this.#wake();
       },
       onSemanticToolInput: handleSemanticInput,
-      recoverSemanticToolInput: o.recoverSemanticToolInput ? call =>
+      recoverSemanticToolInput: call =>
         call.operationId === "paperclip_finish" || call.operationId === "paperclip_block"
-          ? handleSemanticInput(call) : o.recoverSemanticToolInput!(call) : undefined,
+          ? handleSemanticInput(call) : o.recoverSemanticToolInput?.(call) ?? null,
     });
     // Rehydrate the projection from the authenticated transport journal. Broker
     // persistence happens before ACK, so these events have durable projections.
