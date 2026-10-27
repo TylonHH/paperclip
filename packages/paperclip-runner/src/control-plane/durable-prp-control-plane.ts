@@ -23,12 +23,13 @@ import {
   renameSync,
   unlinkSync,
   writeFileSync,
-  type Stats,
 } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { dirname, resolve } from "node:path";
 import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
+import { withStagedPrivateWrite } from "./staged-private-write.js";
+import { verifyPrivateRegularFile } from "./private-state-file.js";
 
 import { NativeSessionProtocolIntegrityError } from "../contracts/native-session-backend.js";
 import { ACPX_CREDENTIAL_BINDING_ENV, ACPX_CREDENTIAL_NAMES, CLAUDE_ROUTING_ENV_KEYS, createAcpxSidecarHostEnvironment } from "../drivers/acpx/environment.js";
@@ -53,6 +54,7 @@ const protocolVersion = RUNNER_PRP_PROTOCOL_MAX;
 const secureFrameSchema = "paperclip.runner.secure-frame.v1";
 const websocketGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const coreStateSchema = "paperclip.runner.durable.control-plane-state.v1";
+const externalCoreStateSchema = "paperclip.runner.external-control-plane-state.v1";
 const transitionCoreStateSchema =
   "paperclip.runner.durable.control-plane-state.warm-transition.v1";
 const maxFrameBytes = 1024 * 1024;
@@ -1276,22 +1278,6 @@ function verifyPrivateDirectory(path: string): void {
   }
 }
 
-function verifyPrivateRegularFile(file: Stats, path: string): void {
-  if (!file.isFile()) {
-    throw new Error(`Private state path is not a regular file: ${path}`);
-  }
-  if (process.platform !== "win32") {
-    if ((file.mode & 0o777) !== 0o600) {
-      throw new Error(`Private state file does not use mode 0600: ${path}`);
-    }
-    if (process.geteuid !== undefined && file.uid !== process.geteuid()) {
-      throw new Error(
-        `Private state file is not owned by the daemon user: ${path}`,
-      );
-    }
-  }
-}
-
 export function readPrivateFile(path: string): string | null {
   let descriptor: number;
   try {
@@ -1372,7 +1358,14 @@ class DurableCoreStore {
   readonly path: string;
   #state: StoredCoreState;
   #writeIndeterminate = false;
+  #writeRevision = 0;
+  #externallyPersisted = false;
   revision = 0;
+  #pendingEvent: {
+    buildCandidate: (state: StoredCoreState) => StoredCoreState | null;
+    isCurrentOwner: () => boolean;
+    committed: boolean;
+  } | null = null;
 
   constructor(directory: string, identity: DurableRecoveryIdentity) {
     try {
@@ -1392,6 +1385,9 @@ class DurableCoreStore {
     const stored = readPrivateFile(this.path);
     if (stored !== null) {
       const parsed = JSON.parse(stored) as unknown;
+      if (isRecord(parsed) && parsed.schema === externalCoreStateSchema) {
+        throw new Error("Restore the external checkpoint before opening this controller.");
+      }
       if (!isStoredCoreState(parsed, identity)) {
         throw new Error(
           "Control-plane state is invalid or does not match the requested PRP identity.",
@@ -1408,26 +1404,88 @@ class DurableCoreStore {
     return this.#state;
   }
 
-  saveEvent(event: DurableRecoveryCommittedEvent): void {
+  useExternalPersistence(): void {
     this.assertWritable();
-    // Output ACKs depend on the runner's durable cursor, not a database timer.
-    // The next control change captures the latest usage and removes old records.
-    if (isStreamingEvent(event)) {
-      if (this.#state.checkpointEventPolicy !== "control-v1") this.write();
-      return;
+    this.#pendingEvent = null;
+    ++this.#writeRevision;
+    // Leave a fail-closed marker, never a stale recovery snapshot. The external
+    // checkpoint must be restored before another controller opens this root.
+    try {
+      atomicPrivateWrite(this.path, JSON.stringify({
+        schema: externalCoreStateSchema,
+        identity: this.#state.identity,
+      }));
+    } catch (error) {
+      this.#writeIndeterminate = true;
+      throw error;
     }
-    this.write();
+    this.#state.checkpointEventPolicy = "control-v1";
+    this.#externallyPersisted = true;
     this.revision += 1;
   }
 
   save(): void {
-    this.write();
-    this.revision += 1;
+    this.assertWritable();
+    ++this.#writeRevision;
+    try {
+      const pending = this.#pendingEvent;
+      // A command already needs a synchronous write. Include the admitted
+      // event there, rather than invalidating and repeating its full write.
+      const withEvent = pending && !pending.committed && pending.isCurrentOwner()
+        ? pending.buildCandidate(this.#state) : null;
+      const candidate = withEvent ?? this.#state;
+      if (!this.#externallyPersisted) {
+        atomicPrivateWrite(this.path, `${JSON.stringify(candidate)}\n`);
+      }
+      this.#state = candidate;
+      if (pending && withEvent) pending.committed = true;
+      this.revision += 1;
+    } catch (error) {
+      this.#writeIndeterminate = true;
+      throw error;
+    }
   }
 
-  private write(): void {
-    this.assertWritable();
-    atomicPrivateWrite(this.path, `${JSON.stringify(this.#state, null, 2)}\n`);
+  /** File-backed events publish after the staged commit. External delivery
+   * waits for its checkpoint callback in the controller. */
+  async commitEvent(
+    buildCandidate: (state: StoredCoreState) => StoredCoreState | null,
+    isCurrentOwner: () => boolean,
+    checkpointRequired: boolean,
+  ): Promise<boolean> {
+    if (!isCurrentOwner()) return false;
+    const pending = { buildCandidate, isCurrentOwner, committed: false };
+    this.#pendingEvent = pending;
+    try {
+      this.assertWritable();
+      const revision = this.#writeRevision;
+      const candidate = buildCandidate(this.#state);
+      if (candidate === null) return false;
+      if (this.#externallyPersisted) {
+        this.#state = candidate;
+        ++this.#writeRevision;
+        if (checkpointRequired) this.revision += 1;
+        return true;
+      }
+      await withStagedPrivateWrite(this.path, `${JSON.stringify(candidate)}\n`, (temporary) => {
+        this.assertWritable();
+        if (pending.committed || !isCurrentOwner() || this.#writeRevision !== revision) return;
+        renameSync(temporary, this.path);
+        syncParentDirectory(this.path);
+        this.#state = candidate;
+        ++this.#writeRevision;
+        pending.committed = true;
+        if (checkpointRequired) this.revision += 1;
+      });
+      // Explicit authority commits do not absorb pending events. On conflict,
+      // leave the event unacknowledged for replay instead of rewriting in a loop.
+      return pending.committed;
+    } catch (error) {
+      this.#writeIndeterminate = true;
+      throw error;
+    } finally {
+      if (this.#pendingEvent === pending) this.#pendingEvent = null;
+    }
   }
 
   assertWritable(): void {
@@ -1437,14 +1495,20 @@ class DurableCoreStore {
       );
   }
 
-  /** Persist a complete candidate before publishing any new authority in memory. */
-  commit(candidate: StoredCoreState): void {
+  /** Replace authority without allowing an older staged event to overwrite it. */
+  commit(candidate: StoredCoreState, checkpointRequired = true): void {
     this.assertWritable();
+    // An explicit authority transaction owns its complete snapshot. Later
+    // command writes must not absorb an event admitted before that boundary.
+    this.#pendingEvent = null;
+    ++this.#writeRevision;
     candidate.checkpointEventPolicy ??= this.#state.checkpointEventPolicy;
     try {
-      atomicPrivateWrite(this.path, `${JSON.stringify(candidate, null, 2)}\n`);
+      if (!this.#externallyPersisted) {
+        atomicPrivateWrite(this.path, `${JSON.stringify(candidate)}\n`);
+      }
       this.#state = candidate;
-      this.revision += 1;
+      if (checkpointRequired) this.revision += 1;
     } catch (error) {
       // Rename may already have succeeded before directory fsync failed.
       // Never overwrite that possibly durable receipt using stale memory.
@@ -1755,13 +1819,17 @@ export class DurablePrpControlPlane {
     return this.#recoveredCursor?.runId === this.#identity.runId ? this.#recoveredCursor.sourceSeq : 0;
   }
 
+  /**
+   * Make the callback the durable authority. Local state becomes a marker;
+   * restart must restore its checkpoint before constructing the controller.
+   * Outbound frames and semantic dispatch still await the callback's commit.
+   */
   setCheckpointPersistence(persist: (checkpoint: DurablePrpCheckpoint) => Promise<void>): void {
     if (this.#connections.size > 0 || this.#persistCheckpoint !== null) {
       throw new Error("runner_controller_persistence_already_active");
     }
+    this.#store.useExternalPersistence();
     this.#persistCheckpoint = persist;
-    this.#store.state.checkpointEventPolicy = "control-v1";
-    this.#store.save();
   }
 
   flushCheckpoint(): Promise<void> {
@@ -3592,32 +3660,50 @@ export class DurablePrpControlPlane {
       return;
     }
 
-    if (existing !== undefined) {
-      existing.deliveryCount += 1;
-      this.#store.state.replayDeliveries += 1;
-    } else {
-      if (this.#store.state.committedEvents.length >= maxCommittedEventWindow) {
-        // The awaited business commit may allow another authenticated owner
-        // or a tool completion to advance the window. Re-evaluate, never use
-        // an index sampled before that await to delete a different input.
-        const currentEviction = evictionCandidate(this.#store.state);
-        if (currentEviction < 0) {
-          connection.close();
-          return;
-        }
-        this.#store.state.committedEvents.splice(currentEviction, 1);
+    const buildCandidate = (state: StoredCoreState): StoredCoreState | null => {
+      const committedEvents = [...state.committedEvents];
+      const replayIndex = committedEvents.findIndex(
+        (candidate) => candidate.sourceEventId === sourceEventId,
+      );
+      if (replayIndex >= 0) {
+        const replay = committedEvents[replayIndex];
+        committedEvents[replayIndex] = {
+          ...replay,
+          deliveryCount: replay.deliveryCount + 1,
+        };
+        return { ...state, committedEvents, replayDeliveries: state.replayDeliveries + 1 };
       }
-      this.#store.state.committedEvents.push({
-        sourceSeq,
-        sourceEventId,
-        eventType,
-        priority,
-        envelope: structuredClone(envelope),
-        deliveryCount: 1,
-        logicalEffectCount: 1,
+      if (sourceSeq !== state.ackedSourceSeq + 1) return null;
+      if (committedEvents.length >= maxCommittedEventWindow) {
+        // A command can settle an input while this snapshot is staged. Use
+        // the current response ledger to select an event that can be evicted.
+        const currentEviction = evictionCandidate(state);
+        if (currentEviction < 0) return null;
+        committedEvents.splice(currentEviction, 1);
+      }
+      committedEvents.push({
+        sourceSeq, sourceEventId, eventType, priority,
+        envelope: structuredClone(envelope), deliveryCount: 1, logicalEffectCount: 1,
       });
-      this.#store.state.ackedSourceSeq = sourceSeq;
+      return { ...state, committedEvents, ackedSourceSeq: sourceSeq };
+    };
+    const isCurrentOwner = () => this.#eventOwner === connection &&
+      this.#identity === identity && this.#protocolIntegrityError === null;
+    if (priority === 0 || isSemanticInput || eventType.startsWith("turn.") || eventType.startsWith("run.")) {
+      // Critical lifecycle suffixes and tool admission must finish in this
+      // turn before readers react or a replacement owner adopts their cursor.
+      const candidate = buildCandidate(this.#store.state);
+      if (candidate === null) {
+        connection.close();
+        return;
+      }
+      this.#store.commit(candidate, !isStreamingEvent(event));
+    } else if (!await this.#store.commitEvent(buildCandidate, isCurrentOwner, !isStreamingEvent(event))) {
+      if (isCurrentOwner()) connection.close();
+      return;
     }
+    if (!isCurrentOwner()) return;
+
     const liveCall = isSemanticInput && this.#onSemanticToolInput && semantic !== undefined
       && typeof semantic.callId === "string" && typeof semantic.operationId === "string"
       ? { callId: semantic.callId, operationId: semantic.operationId, input: semantic.input,
@@ -3634,7 +3720,6 @@ export class DurablePrpControlPlane {
     if (ownsLiveDispatch) this.#pendingSemanticCalls.add(liveCommandId!);
     let dispatched = false;
     try {
-      this.#store.saveEvent(existing ?? this.#store.state.committedEvents.at(-1)!);
       await this.flushCheckpoint();
       if (this.#eventOwner !== connection || this.#identity !== identity) return;
       if (ownsLiveDispatch && liveCall && liveCommandId && this.#onSemanticToolInput && !this.getCommand(liveCommandId)) {

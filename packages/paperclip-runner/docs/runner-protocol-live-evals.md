@@ -311,6 +311,31 @@ The manifest schema is `paperclip.runner-eval.controller/v1`. It contains:
   `requestSha256`, `provider`, optional `acpxAgent`, exact `model`, `maxUsd`,
   `maxRequests`, `maxConcurrent`, and `timeoutMs`. Native Codex and ACPX
   Claude are supported. Each execution has one explicit attempt and no retry.
+- Optional `observability`: an explicit `projectId`, four boolean `capture`
+  switches (`userPrompts`, `assistantResponses`, `toolDetails`, `toolContent`),
+  `nativeLimits`, and a reviewed full-lifecycle `provisionalBound`. When absent,
+  the controller starts no exporter or OTLP relay.
+
+For GitHub workers, the manifest must also contain `hosted` with `repository`,
+`runId` (a decimal string), `runAttempt: 1`, and `workflowRevision` (the run's
+`GITHUB_SHA`, including the merge commit for a pull-request run). Its `campaignId` must be `gha-<runId>-1`. Before creating
+an admission record, reading provider credentials, or starting a proxy, both
+`archive.mjs verify` and `run.mjs` compare this identity with the current
+`GITHUB_ACTIONS`, `GITHUB_REPOSITORY`, `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT` and
+`GITHUB_SHA`. Set `PAPERCLIP_RUNNER_EVAL_EXECUTION_ID` from the worker's selected
+cell. It must equal the bound allocation's `executionId`. A reused preparation
+job cannot authorize a later GitHub run attempt. Local manifests remain usable
+outside a GitHub context. A hosted manifest cannot execute with missing context.
+
+This checks the trusted workflow's current environment; it is not a distributed
+lock or signed GitHub attestation. The workflow must prepare one complete manifest,
+distribute identical bytes and fan out each selected cell exactly once. The
+private `prepare_controlled_campaign.py` command prepares requests with the
+existing case compiler and rejects duplicate or missing matrix cells. Independent
+budgets, a second workflow run, or duplicate first-attempt jobs are not authorized
+by this guard. Pack and report commands remain usable offline after the run, so
+expired or failed attempts can still be retained and reconciled. The current
+live workflow has not yet been connected to this contract.
 
 Use `requestBindingSha256` from `controlled-evals/manifest.mjs` to bind the
 complete compiled request. It excludes only the temporary working directory
@@ -407,8 +432,106 @@ This local controller is not yet wired into the hosted matrix. Its durable
 attempt-directory guard applies to one shared filesystem, not independent
 GitHub workers. Hosted integration must bind unique cells to the prepared
 allocation, reject workflow/job reruns, and preserve the controller evidence
-before enabling paid work. Native OTLP routing, report integration, vendor
+before enabling paid work. Hosted tracing, destination readback, vendor
 metering bounds, and actual paid qualification remain separate gates.
+
+### Portable controller runtime
+
+The controller can run from a copied artifact without a repository checkout,
+`tsx`, or a worker-side dependency install. Build it once from the trusted
+orchestration checkout after installing that checkout's pinned dependencies:
+
+```sh
+node packages/paperclip-runner/scripts/controlled-evals/build-runtime.mjs \
+  /private/new-controller-runtime-directory "$(git rev-parse HEAD)"
+```
+
+The output directory must not exist. The build copies the controller entrypoints,
+bundles the shared cost and tracing code, and copies the installed protobuf
+runtime dependency closure. It does not install dependencies or run package
+lifecycle scripts. `runtime.json` records the caller-supplied source revision,
+source input hashes, installed package manifest hashes, and every output file's
+size and SHA-256. The caller must build from the intended trusted checkout; the
+revision label alone is not source attestation. The artifact is limited to
+32 MiB and 4,096 files, including a receipt limited to 2 MiB by both the builder
+and verifier. It contains no campaign credentials or allowance.
+
+Save the printed `receiptSha256` outside the artifact, such as a trusted build
+job output. Before a worker loads any copied code, invoke the verifier from its
+trusted orchestration checkout with that digest and the expected revision:
+
+```sh
+node packages/paperclip-runner/scripts/controlled-evals/verify-runtime.mjs \
+  /private/copied-controller-runtime-directory \
+  "$TRUSTED_CONTROLLER_REVISION" "$TRUSTED_CONTROLLER_RECEIPT_SHA256"
+```
+
+The verifier rejects altered, missing, unexpected, or nonregular files and a
+mismatched receipt. Do not obtain the expected digest from the downloaded
+artifact itself or execute its verifier before checking it with trusted code.
+Verification assumes a worker-owned directory that no other process can mutate
+between verification and execution.
+
+Use the copied `controlled-evals/run.mjs` as `--runner-cli` and its sibling
+`archive.mjs` as `PAPERCLIP_RUNNER_EVAL_ARCHIVE_CLI`. The existing reviewed campaign
+manifest is still required. Its executable paths and digests bind the actual
+Runner build, not this controller wrapper. The artifact does not authorize paid
+work, coordinate worker allocations, or prevent a workflow rerun by itself.
+The hosted matrix still needs the shared manifest and per-worker admission
+checks described above.
+
+## Controller tracing allocations and retained proof
+
+The opt-in controller uses the existing native launch generator and Product E2E
+OTLP relay. `nativeLimits` must explicitly provide `maxRequests`,
+`maxRequestBytes`, `maxTotalBytes`, `maxConcurrent`, `maxExpandedBytes`, and
+`maxRecords`, each within that relay's supported ceilings. These limits apply
+to each selected attempt, including failed attempts. Each attempt additionally
+reserves one controller root request, at most 16 KiB of source JSON, 64 KiB
+expanded source size, and one record. The root relay has its own credential;
+the provider cannot consume its allocation or change its parent.
+
+Use `observabilityBoundConfiguration(manifest)` from `manifest.mjs` as the
+configuration for the observability `provisionalBound`. It binds the complete
+attempt selection, compiled-request digests, revisions, project, capture,
+native and root capacities, deadline, and operating allowance. Its evidence
+SHA-256 must match the observability operating component's evidence. Changing
+these inputs invalidates the qualification. The reviewed evidence must cover
+the sum of all attempts' native and root capacities and full retention costs;
+source bytes and receiver acceptance do not themselves establish billed bytes,
+price, or a vendor spending cap. This declaration does not activate an allowance.
+
+The controller requires `BRAINTRUST_API_KEY` even when model traffic uses a
+direct provider key. Both upstream credentials stay on the controller. The
+provider receives only its attempt's model and native OTLP tokens. Native
+headers and any payload parent must match the exact assigned attempt parent,
+including when another parent belongs to the same project. Cancellation closes
+both relays, aborts pending forwarding, and retains uncertain outcomes without
+retrying them.
+
+Private archives retain `observability.json`, body-free `otlp-native.jsonl` and
+`otlp-controller.jsonl` receipts, and the metadata-only `otlp-root.json`.
+Offline replay validates allocation, parent, descriptor, payload digests,
+admission/outcome pairs, quotas, closure totals, and the root's identity and
+content after the worker is deleted. Missing, partial, quota-exhausted, poisoned,
+or unfinished export evidence keeps the attempt incomplete with its full model
+allocation held and known model charges preserved. Operating holds remain
+reserved once per campaign. OTLP usage is never added to the model ledger.
+
+`observability.status: "accepted"` requires accepted native log and trace
+records plus the controller root. It describes the retained requests only;
+`verification: "unverified"` remains until separate Braintrust readback.
+Neither field proves complete capture, semantic grading success, or invoice
+settlement. The root links revisions, the compiled request, execution, attempt,
+provider, model, and cleanup status. Native receipts are checked before the root
+is built. Its `controller_status_before_root_export` includes known native export
+failures; the final retained report remains authoritative for root-export failures
+or later cancellation. Cancellation stays connected through root finalization.
+Feedback persistence is explicitly
+unavailable in the Runner mock control plane; it does not report zero complaints
+or suggestions. Actual grading and provider failures remain in the immutable
+Runner artifact.
+
 ## Hosted campaign
 
 Use the `Runner Direct Live Protocol Evals` workflow. Dispatch the workflow

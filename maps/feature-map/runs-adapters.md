@@ -14,6 +14,7 @@ Agent access: [companion](../agent-access-map/runs-adapters.md).
 
 ## Sub-features
 
+- `model-accounts`: `runs-adapters/model-accounts` — configure AI accounts, login attempts, defaults, bindings, usage and pools through delegated connection APIs.
 - `availability`: `runs-adapters/availability` — discover installed adapters and available models/accounts.
 - `validation`: `runs-adapters/validation` — test an adapter in the selected execution environment and surface authentication failures.
 - `runs`: `runs-adapters/runs` — inspect run status, events, output, costs, and the source task.
@@ -24,6 +25,13 @@ Agent access: [companion](../agent-access-map/runs-adapters.md).
 ### `adapter-setup`
 
 Open an agent’s model/adapter configuration or the instance adapter settings page when permitted.
+
+### `managed-account-setup`
+
+Ask an authorized agent to save or connect a managed AI account. Open its saved
+`aiLogin` setup link as the responsible human when sign-in or a code is required.
+The agent can inspect the saved attempt and manage authorized account/pool
+bindings; human authentication and raw host administration retain their gates.
 
 ### `run-history`
 
@@ -48,6 +56,21 @@ turn; do not count a nested discovery interval twice.
 ## Driving it with Playwright and the Paperclip CLI
 
 Preconditions: follow the [baseline](./README.md#before-driving-a-journey). Record adapter, model, account, native/legacy runtime, and environment. Capabilities vary; one harness result is not a matrix-wide qualification.
+
+### `managed-account-setup`
+
+Automated: [actual-auth connection integration](../../server/src/__tests__/connection-management.integration.test.ts)
+exercises account/pool persistence, responsible-user ownership, agent attribution,
+saved local-login access and native secret-response protection with provider fixtures.
+[Saved handoff UI tests](../../ui/src/pages/apps/AppsConnect.test.tsx)
+exercise setup routing with mocked APIs. Neither establishes live provider sign-in.
+
+Manual: Start delegated managed-account setup, reload the exact saved human
+handoff, finish the required login, and inspect the saved account and original
+task continuation. Bind the account or pool only to authorized agents, reload
+their configuration, and verify the selected owner and account remain correct.
+Reject a different user's saved attempt, revoked management authority and Ask/Plan
+mutations. Qualify a useful model task separately from saving the account.
 
 ### `session`
 
@@ -145,6 +168,16 @@ is released before failure returns. Repeat a warm follow-up and retain its actua
 reply time. The [executor controls](../../server/src/services/native-runtime/native-session-executor.test.ts)
 cover ordering, failure drain and credential projection; they do not qualify a
 live response-time target.
+For native OpenCode with assigned connections, inspect the provider tool surface
+on both local and sandbox execution. It should contain bounded assigned-tool
+search/call schemas. Discover an allowed tool, call its returned alias, revoke
+its grant, and confirm discovery and execution enforce that revocation. Repeat
+in planning/ask mode with a write tool and confirm denial. The controller must
+retain the assigned gateway URL and token. An older direct-catalog OpenCode
+checkpoint must refresh without changing another provider's fingerprint. The
+[assigned-tool](../../server/src/services/native-runtime/assigned-mcp-tools.test.ts)
+and executor controls cover source behavior; live sandbox discovery and a real
+call remain separate acceptance evidence.
 Missing dependencies, failed authentication, invalid models and
 incompatible custom settings must remain actionable errors without silent runner
 switching. Saved unchanged execution can still be tested without applying new
@@ -235,3 +268,7 @@ The existing transport and ingress suites exercise these conditions without a
 provider. Repeat the actual managed setup and useful task journey separately;
 the literal `651a3de64fc943216cc414b64b1443809f9499da` Test attempt failed
 cleanup before hire and retains its unconfirmed recovery state.
+
+### `delegated-configuration`
+
+See the canonical [delegated configuration guidance and acceptance evidence](connection-setup.md#delegated-configuration).

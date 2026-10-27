@@ -288,6 +288,28 @@ export async function closeLivenessDb(db: Db, timeoutSeconds: number): Promise<v
   await livenessDbs.get(db)?.$client.end({ timeout: timeoutSeconds });
 }
 
+// Control checkpoints must not occupy the request or lease-renewal pools
+// during an aligned burst. Share at most two lazy connections per owner.
+const checkpointDbFactories = new WeakMap<object, () => Db>();
+const checkpointDbs = new WeakMap<object, Db>();
+
+/** The bounded controller checkpoint pool; transactions and test doubles keep
+ * their existing database when they have no owning client factory. */
+export function checkpointDb(db: Db): Db {
+  const existing = checkpointDbs.get(db);
+  if (existing) return existing;
+  const factory = checkpointDbFactories.get(db);
+  if (!factory) return db;
+  const created = factory();
+  checkpointDbs.set(db, created);
+  return created;
+}
+
+/** Keep the ended pool cached so late checkpoints cannot reopen it. */
+export async function closeCheckpointDb(db: Db, timeoutSeconds: number): Promise<void> {
+  await checkpointDbs.get(db)?.$client.end({ timeout: timeoutSeconds });
+}
+
 export function createDb(url: string, options?: DatabaseClientOptions) {
   const resolved = resolveDatabaseClientOptions(options ?? databaseClientOptionsFromEnv());
   return createDbClient(url, resolved);
@@ -309,6 +331,9 @@ function createDbClient(url: string, resolved: DatabaseClientOptions, owner?: ob
   }, db));
   livenessDbFactories.set(db, () => createDbClient(url, {
     ...resolved, maxConnections: LIVENESS_POOL_MAX_CONNECTIONS, applicationName: "paperclip-controller-lease",
+  }, db));
+  checkpointDbFactories.set(db, () => createDbClient(url, {
+    ...resolved, maxConnections: 2, applicationName: "paperclip-runner-checkpoint",
   }, db));
   return db;
 }
