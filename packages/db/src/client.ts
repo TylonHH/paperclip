@@ -74,19 +74,25 @@ function registerClient(key: string, client: RegisteredPostgresClient): void {
  * client that outlives the cluster it points at can crash the process (a
  * reserved connection's deferred write firing after the socket is gone).
  * Swallows individual `end()` errors so one bad client cannot block the rest.
+ * An owned database on a shared test host must select database scope instead;
+ * its teardown cannot close another fixture's clients on that host.
  */
-export async function closeRegisteredClients(url: string): Promise<void> {
+export async function closeRegisteredClients(url: string, options?: { scope: "database" }): Promise<void> {
   const key = hostPortKey(url);
+  const database = options?.scope === "database" ? decodeURIComponent(new URL(url).pathname.slice(1)) : undefined;
+  if (database === "") throw new Error("Database-scoped teardown requires an explicit database name");
   const refs = clientsByHostPort.get(key);
   if (!refs) return;
 
-  clientsByHostPort.delete(key);
   const clients: RegisteredPostgresClient[] = [];
   for (const ref of refs) {
-    clientFinalizer.unregister(ref);
     const client = ref.deref();
+    if (client && database !== undefined && client.options.database !== database) continue;
+    refs.delete(ref);
+    clientFinalizer.unregister(ref);
     if (client) clients.push(client);
   }
+  if (refs.size === 0) clientsByHostPort.delete(key);
 
   await Promise.all(clients.map((client) => client.end({ timeout: 1 }).catch(() => {})));
 }

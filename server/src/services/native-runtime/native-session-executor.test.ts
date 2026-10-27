@@ -12052,9 +12052,11 @@ describe("runnerd provider runtime wiring", () => {
     const artifact = { version: "admitted-version", digest: `sha256:${"a".repeat(64)}` };
     await createRunnerdBackend({ db: leaseDb(current), execution: current, runnerInstanceId: identity.runnerInstanceId,
       runnerRemoteBinaryPath: missingBinary, runnerRemoteProviderPackPath: missingPack,
+      runnerIngressAuthorized: true,
       controllerPersistence: { bootId: "successor", runnerArtifact: artifact },
       runnerExecutionTarget: { kind: "remote", transport: "sandbox", remoteCwd: "/workspace",
         environmentId: "environment", leaseId: identity.environmentLeaseId, providerKey: "daytona", runner: { execute },
+        effectiveCapabilities: { runnerWebSocketIngress: true },
         sandboxLeaseAcquisition: { outcome: "resumed", providerLeaseId: "sandbox" } } as never,
       restartRecovery: { kind: "reattach_remote_runner", runId: current.binding.runId, leaseOwner: "controller",
         controllerGeneration: 2, providerAttempt: 1, restartKind: "hard", recoveryRequestId: null,

@@ -1061,3 +1061,44 @@ measurements do not qualify a new hosted artifact, a different harness, actual
 A→B/B→A replacement, or the ordinary Cloud rollout policy. Those gates remain
 open and PR 3 remains draft. Integrated-stack checks and review status belong to
 the exact current PR heads, not to the measured source by inference.
+
+### Integrated persistence review (2026-10-27)
+
+The stack incorporates master `663fe667d6`. Its runner controller suite passes
+164 tests and the rebuilt transport/one-process fixture lane passes 303. The
+transcript window merge regression fails before correction `bccff8f35d` and
+passes afterward with all 327 affected UI tests. The production-runner browser
+journey passes at `ca600c76e3`, including two views, company switching, reconnect,
+terminal catch-up, reload and zero recurring healthy transcript reads. It uses a
+deterministic harness fixture, not a model service or hosted harness.
+
+Fresh review adds three server receipt regressions: title/feedback receipts have
+their own stores; committed creation/reassignment still need their idempotent
+wake suffix; monitor input and retry keys use owner normalization. All seven
+cases fail before `0edb3a736e`. Recovery now reuses those owners without entering
+an absent receipt's mutation or cancellation path. The new cases, existing
+semantic authority cases and real HTTP/API recovery lane pass all 92 tests on
+owned PostgreSQL databases after `d0ce42378c` fixes fixture teardown. That fixture
+bug had closed a sibling database's clients on the shared host; its independent
+wire-protocol regression fails first, then all four teardown tests pass.
+
+The first HTTP attempt fails embedded-Postgres initialization on this Mac. The
+first external-host attempt passes 90 cases and fails its last two after sibling
+teardown, plus teardown itself. Both failures remain recorded. The earlier full
+Mac suite was interrupted after repeated cluster initialization failures and is
+not a green whole-suite result. Qualification units pass 46 cases but fail their
+embedded-database setup case locally. These results are separate from fresh CI.
+
+CI's server shard initially passes 2,046 cases and fails three provider adoption
+fixtures that omitted required Daytona ingress authorization/capability. Test
+correction `47a159e3ba` represents the authorized target without weakening the
+production transport check; all four affected adoption cases pass locally.
+Workspace typecheck passes after the receipt and teardown corrections, including
+protocol checks and Rust. The sandbox-denied tsx IPC attempt is retained beside
+the permitted retry. Current-head CI and review are still required.
+
+PR 4 correction `9219fc6bc6` preserves a gap notice that could not be sent before
+an unrelated view changed its interests. The reproducer fails first; all 19
+server delivery/browser-interest tests then pass. The original congestion
+deadline remains active until the browser is told to catch up. This changes
+presentation recovery only; it has no checkpoint, execution or accounting effect.
