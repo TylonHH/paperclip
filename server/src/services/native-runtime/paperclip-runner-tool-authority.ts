@@ -415,10 +415,21 @@ export class PaperclipRunnerToolAuthority {
       if (!Object.hasOwn(receipt, "result")) return null;
       return { result: await this.#withInstructionMutationReceipt(call.tool, call.callId, input, true) };
     }
-    const key = typeof input.idempotencyKey === "string" ? input.idempotencyKey : null;
-    const receipt = key ? record(record(run.resultJson?.semanticToolReceipts)[key]) : {};
-    if (receipt.operationId === call.tool && canonicalJson(receipt.input) === canonicalJson(call.arguments)
-      && Object.hasOwn(receipt, "result")) return { result: receipt.result };
+    // Recovery goes through the receipt owner: it must use the same parsed
+    // input, current authority and safe post-commit dispatch as an ordinary
+    // retry, without ever falling through to an uncertain mutation.
+    let recovered: unknown;
+    if (call.tool === "set_task_title") recovered = await this.#setTaskTitle(input, true);
+    else if (call.tool === "submit_complaint" || call.tool === "submit_suggestion") recovered = await this.#submitCommentary(call.tool, input, true);
+    else if (call.tool === "create_task") recovered = await this.#createTask(input, null, true);
+    else if (call.tool === "reassign_task") recovered = await this.#reassignTask(input, true);
+    else if (call.tool === "set_task_monitor") recovered = await this.#setTaskMonitor(input, true);
+    else if (typeof input.idempotencyKey === "string" && input.idempotencyKey.trim()) {
+      // The other semantic mutations retain their original input and use
+      // requiredString for their retry key. A null effect is receipt-only.
+      recovered = await this.#withMutationReceipt(call.tool, requiredString(input.idempotencyKey), input, null);
+    }
+    if (recovered !== undefined) return { result: recovered };
 
     const callKey = toolCallKey(call.callId);
     if (call.tool === "call_api" || call.tool === "hire_agent" || Object.hasOwn(TASK_API_PATHS, call.tool)) {
@@ -725,13 +736,8 @@ export class PaperclipRunnerToolAuthority {
           callApi: (receiptKey, request) => this.#callApi(receiptKey, request, { dedicatedCaseTool: call.tool, caseId: request.pathParams?.id }),
         });
       case "submit_complaint":
-      case "submit_suggestion": {
-        const parsed = agentCommentaryToolInputSchema.safeParse(call.arguments);
-        if (!parsed.success) throw badRequest("Feedback accepts only a nonempty body of at most 524288 characters and a retry key of at most 240 characters");
-        return submitAgentCommentary(this.db, this.binding, {
-          ...parsed.data, kind: call.tool === "submit_complaint" ? "complaint" : "suggestion",
-        }, (tx) => this.#lockAuthorizedMutationContext(tx));
-      }
+      case "submit_suggestion":
+        return this.#submitCommentary(call.tool, input);
       case "read_agent_instructions":
       case "get_agent_instruction_history":
         return executeAgentInstructionTool({ db: this.db, binding: {
@@ -1552,7 +1558,7 @@ export class PaperclipRunnerToolAuthority {
     if (!member) throw forbidden("Person is not an active company member");
   }
 
-  async #createTask(input: Record<string, unknown>, identityContextId: string | null): Promise<unknown> {
+  async #createTask(input: Record<string, unknown>, identityContextId: string | null, receiptOnly = false): Promise<unknown> {
     const idempotencyKey = requiredString(input.idempotencyKey);
     if (input.status !== undefined && input.status !== "backlog" && input.status !== "todo") {
       throw new Error("paperclip_runner_tool_input_invalid");
@@ -1720,7 +1726,8 @@ export class PaperclipRunnerToolAuthority {
           assigneeUserId: child.assigneeUserId,
         },
       };
-    }, { beforeReceiptReplay: async (tx, context) => { await authorizeCreate(tx, context); } }) as Record<string, unknown>;
+    }, { receiptOnly, beforeReceiptReplay: async (tx, context) => { await authorizeCreate(tx, context); } }) as Record<string, unknown> | undefined;
+    if (result === undefined) return undefined;
 
     if (publication) publishActivity(publication);
     const task = record(result.task);
@@ -1755,7 +1762,7 @@ export class PaperclipRunnerToolAuthority {
   }
 
 
-  async #reassignTask(input: Record<string, unknown>): Promise<unknown> {
+  async #reassignTask(input: Record<string, unknown>, receiptOnly = false): Promise<unknown> {
     const key = requiredString(input.idempotencyKey);
     const taskId = requiredUuid(input.taskId);
     const assigneeUserId = input.assigneeUserId == null ? null : requiredString(input.assigneeUserId);
@@ -1822,7 +1829,7 @@ export class PaperclipRunnerToolAuthority {
     };
     // Stop outside row locks: the runtime needs those locks to acknowledge cancellation.
     // A second locked check below prevents any intervening ownership/version change.
-    const prepared = await this.db.transaction(async (tx) => {
+    const prepared = receiptOnly ? null : await this.db.transaction(async (tx) => {
       const context = await this.#lockAuthorizedMutationContext(tx as unknown as Db);
       if (context.issue.workMode !== "standard") throw new Error("paperclip_runner_tool_mode_denied");
       const target = await authorize(tx as unknown as Db, context.run);
@@ -1911,12 +1918,13 @@ export class PaperclipRunnerToolAuthority {
       });
       publication = activity.publication;
       return receipt;
-    }, { beforeReceiptReplay: async (tx, context) => { await authorize(tx, context.run); } }).catch(async (error: unknown) => {
+    }, { receiptOnly, beforeReceiptReplay: async (tx, context) => { await authorize(tx, context.run); } }).catch(async (error: unknown) => {
       await restoreInterruptedWork(error);
       throw error;
     }) as {
       stateRevision: number; scheduledWakeIds: string[];
-    };
+    } | undefined;
+    if (result === undefined) return undefined;
     if (publication) publishActivity(publication);
     // Replay repairs a failed dispatch. The durable wake key and state/version guard
     // prevent duplicate successors and prevent waking a later, unrelated assignment.
@@ -1932,17 +1940,33 @@ export class PaperclipRunnerToolAuthority {
     return result;
   }
 
-  async #setTaskTitle(input: Record<string, unknown>): Promise<unknown> {
+  async #submitCommentary(tool: "submit_complaint" | "submit_suggestion", input: Record<string, unknown>, receiptOnly = false): Promise<unknown> {
+    const parsed = agentCommentaryToolInputSchema.safeParse(input);
+    if (!parsed.success) throw badRequest("Feedback accepts only a nonempty body of at most 524288 characters and a retry key of at most 240 characters");
+    const value = { ...parsed.data, kind: tool === "submit_complaint" ? "complaint" : "suggestion" };
+    const authorize = (tx: Db) => this.#lockAuthorizedMutationContext(tx);
+    const result = receiptOnly
+      ? await submitAgentCommentary(this.db, this.binding, value, authorize, { receiptOnly: true })
+      : await submitAgentCommentary(this.db, this.binding, value, authorize);
+    return result ?? undefined;
+  }
+
+  async #setTaskTitle(input: Record<string, unknown>, receiptOnly = false): Promise<unknown> {
     const titleInput = setIssueTitleSchema.parse(input);
     requiredString(titleInput.idempotencyKey);
     // Use the shared title receipt so native and HTTP retries have the same
     // identity and cannot overwrite a later user edit when switching surfaces.
-    const { result, publication } = await this.db.transaction(async (tx) => {
+    const receipt = await this.db.transaction(async (tx) => {
       await this.#lockAuthorizedMutationContext(tx as unknown as Db);
-      return setIssueTitle(tx as unknown as Db, this.binding.companyId, this.binding.issueId, titleInput, {
+      const actor = {
         actorType: "agent", actorId: this.binding.agentId, agentId: this.binding.agentId, runId: this.binding.runId,
-      });
+      } as const;
+      return receiptOnly
+        ? setIssueTitle(tx as unknown as Db, this.binding.companyId, this.binding.issueId, titleInput, actor, { receiptOnly: true })
+        : setIssueTitle(tx as unknown as Db, this.binding.companyId, this.binding.issueId, titleInput, actor);
     });
+    if (!receipt) return undefined;
+    const { result, publication } = receipt;
     if (publication) publishActivity(publication);
     const syncExternalObjects = this.binding.syncIssueExternalObjects ?? externalObjectService(this.db, {
       enabled: async () => (await instanceSettingsService(this.db).getExperimental()).enableExternalObjects === true,
@@ -1951,7 +1975,7 @@ export class PaperclipRunnerToolAuthority {
     return result;
   }
 
-  async #setTaskMonitor(value: Record<string, unknown>): Promise<unknown> {
+  async #setTaskMonitor(value: Record<string, unknown>, receiptOnly = false): Promise<unknown> {
     const input = setTaskMonitorSchema.parse(value);
     if (input.monitor?.externalRef) input.monitor.externalRef = redactIssueMonitorExternalRef(input.monitor.externalRef);
     const targetId = input.taskId ?? this.binding.issueId;
@@ -2020,12 +2044,13 @@ export class PaperclipRunnerToolAuthority {
       });
       publication = activity.publication;
       return { taskId: updated.id, status: updated.status, monitor };
-    }, { beforeReceiptReplay: async (tx, context) => {
+    }, { receiptOnly, beforeReceiptReplay: async (tx, context) => {
       const { target } = await authorizeTarget(tx, context);
       replayed = true;
       replayStatus = target.status;
       replayMonitor = summarizeIssueMonitor(target, normalizeIssueExecutionPolicy(target.executionPolicy));
     } });
+    if (result === undefined) return undefined;
     if (publication) publishActivity(publication);
     return { ...record(result), ...(replayed ? { status: replayStatus, monitor: replayMonitor } : {}), replayed };
   }
@@ -2490,15 +2515,16 @@ export class PaperclipRunnerToolAuthority {
     operationId: string,
     idempotencyKey: string,
     input: Record<string, unknown>,
-    effect: (
+    effect: ((
       tx: Db,
       context: {
         run: typeof heartbeatRuns.$inferSelect;
         issue: typeof issues.$inferSelect;
         actor: typeof agents.$inferSelect;
       },
-    ) => Promise<unknown>,
+    ) => Promise<unknown>) | null,
     options: {
+      receiptOnly?: boolean;
       onDefinitePreCommitFailure?: () => Promise<void>;
       beforeReceiptReplay?: (
         tx: Db,
@@ -2574,11 +2600,13 @@ export class PaperclipRunnerToolAuthority {
             prior.operationId !== operationId ||
             canonicalJson(prior.input) !== canonicalJson(input)
           ) {
+            if (effect === null || options.receiptOnly) return undefined;
             throw new Error("paperclip_runner_tool_idempotency_conflict");
           }
           await options.beforeReceiptReplay?.(tx as unknown as Db, context);
           return describeResult(prior.result);
         }
+        if (effect === null || options.receiptOnly) return undefined;
         const result = JSON.parse(
           JSON.stringify(
             describeResult(await effect(tx as unknown as Db, context)),
