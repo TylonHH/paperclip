@@ -4327,7 +4327,7 @@ export function LogViewer({ run, adapterType }: { run: HeartbeatRun; adapterType
                 ?? "text-foreground";
 
               return (
-                <div key={evt.id} className="flex gap-2">
+                <div key={`${evt.runId}:${evt.seq}`} className="flex gap-2">
                   <span className="text-neutral-400 dark:text-neutral-600 shrink-0 select-none w-16">
                     {new Date(evt.createdAt).toLocaleTimeString("en-US", { hour12: false })}
                   </span>

@@ -221,6 +221,35 @@ it.each([LogViewer, ProductionLogViewer])("preserves saved event details and cat
   } finally { await act(async () => root.unmount()); }
 }, 30_000);
 
+it.each([LogViewer, ProductionLogViewer])("merges saved and live rows with colliding database and run-sequence IDs (%#)", async Viewer => {
+  vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  log.mockResolvedValue({ content: "", nextOffset: 0 });
+  const run = { id: "run-1", companyId: "company-1", agentId: "agent-1", status: "running" } as HeartbeatRun;
+  const row = (id: number, seq: number, message: string): HeartbeatRunEvent => ({ id, seq, runId: run.id,
+    companyId: run.companyId, agentId: run.agentId, eventType: "item.completed", message,
+    stream: null, level: null, color: null, payload: {}, createdAt: new Date() });
+  events.mockResolvedValueOnce([row(2, 1, "saved first row")]);
+  const listeners = new Set<CompanyLiveEventHandler>();
+  const subscription = { companyId: run.companyId, transcripts: new LiveTranscriptInterests(),
+    subscribe(fn: CompanyLiveEventHandler) { listeners.add(fn); return () => { listeners.delete(fn); }; } };
+  const container = document.createElement("div"), root = createRoot(container);
+  const { LiveEventSubscriptionContext } = __liveUpdatesTestUtils;
+  const emit = (seq: number, message: string) => {
+    const event: LiveEvent = { id: seq, companyId: run.companyId, type: "heartbeat.run.event",
+      createdAt: new Date().toISOString(), payload: { ...row(seq, seq, message) } };
+    for (const listener of listeners) listener(event);
+  };
+  try {
+    await act(async () => root.render(<LiveEventSubscriptionContext.Provider value={subscription}><Viewer run={run} adapterType="paperclip_runner" /></LiveEventSubscriptionContext.Provider>));
+    await act(async () => { emit(2, "live second row"); emit(3, "live third row"); });
+    expect(container.textContent).toContain("saved first row");
+    expect(container.textContent).toContain("live second row");
+    expect(container.textContent).toContain("live third row");
+    expect(consoleError.mock.calls.filter(args => args.some(value => String(value).includes("same key")))).toEqual([]);
+  } finally { await act(async () => root.unmount()); }
+});
+
 it.each([
   { Viewer: LogViewer, stalled: "log" }, { Viewer: ProductionLogViewer, stalled: "log" },
   { Viewer: LogViewer, stalled: "events" }, { Viewer: ProductionLogViewer, stalled: "events" },
