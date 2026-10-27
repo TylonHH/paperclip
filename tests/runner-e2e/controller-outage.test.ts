@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { configuredControllerOutage, parseControllerOutage, replaceController, validControllerOutageReceipt } from "./controller-outage.js";
+import { configuredControllerOutage, controllerOutageForExecution, parseControllerOutage, replaceController, validControllerOutageReceipt } from "./controller-outage.js";
+import { parseRunnerSelectors, selectRunnerExecutions } from "./selectors.js";
 
 function fixture() {
   const order: string[] = [];
@@ -16,6 +17,23 @@ function fixture() {
 }
 
 describe("controller outage qualification", () => {
+  it.each(["runner-codex", "runner-acpx-claude"])("supplies replacement fault evidence to the %s Daytona restart cell", async profile => {
+    const [execution] = selectRunnerExecutions(parseRunnerSelectors([
+      "--id", `everyday-workflows.${profile}.daytona.recover-controller`,
+    ]));
+    expect(execution).toBeDefined();
+    const f = fixture();
+    const outage = controllerOutageForExecution(execution!, { PAPERCLIP_RUNNER_E2E_CONTROLLER_OUTAGE_MS: "20" });
+    const receipt = outage ? await replaceController({ ...f.input, outage }) : undefined;
+    expect(validControllerOutageReceipt(receipt, { signal: "SIGKILL", holdMs: 20 })).toBe(true);
+    expect(receipt).toMatchObject({ previousPid: 100, replacementPid: 200, cacheDiscarded: true });
+    expect(f.order).toEqual(["SIGKILL", "http-down", "empty-cache", "start", "ready"]);
+    for (const other of [
+      { ...execution!, environment: { ...execution!.environment, id: "local" as const } },
+      { ...execution!, profile: { ...execution!.profile, generation: "legacy" as const } },
+      { ...execution!, task: { ...execution!.task, id: "stop-redirect" } },
+    ]) expect(controllerOutageForExecution(other, {})).toBeUndefined();
+  });
   it("records an actual bounded outage before starting the successor", async () => {
     const f = fixture();
     const receipt = await replaceController(f.input);

@@ -1,6 +1,7 @@
 import type { ServingArtifact } from "./upgrade-artifacts.js";
 import type { ControllerRecoveryReceipt } from "./controller-recovery-observer.js";
 import { setTimeout as delay } from "node:timers/promises";
+import type { MatrixExecution } from "./types.js";
 
 export interface ControllerOutage {
   signal: "SIGTERM" | "SIGKILL";
@@ -35,6 +36,13 @@ export function configuredControllerOutage(env: NodeJS.ProcessEnv): ControllerOu
   const raw = env.PAPERCLIP_RUNNER_E2E_CONTROLLER_OUTAGE_MS ?? "1000";
   if (!/^\d+$/.test(raw)) throw new Error("Invalid PAPERCLIP_RUNNER_E2E_CONTROLLER_OUTAGE_MS");
   return parseControllerOutage({ signal: env.PAPERCLIP_RUNNER_E2E_CONTROLLER_STOP_SIGNAL ?? "SIGKILL", holdMs: Number(raw) });
+}
+
+export function controllerOutageForExecution(execution: MatrixExecution, env: NodeJS.ProcessEnv): ControllerOutage | undefined {
+  return execution.suite.id === "everyday-workflows" && execution.task.id === "recover-controller"
+    && execution.environment.id === "daytona" && execution.profile.generation === "native"
+    && (execution.profile.provider === "codex" || execution.profile.provider === "acpx")
+    ? configuredControllerOutage(env) : undefined;
 }
 
 /** A fault receipt is required in addition to the runner's continuity receipts. */

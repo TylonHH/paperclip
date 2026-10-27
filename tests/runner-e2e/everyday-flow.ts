@@ -21,7 +21,7 @@ import { waitForTaskChatRendered, waitForTaskIdentity } from "./continuation-scr
 import { hasPersistedSource, isSavedSourceCheckpoint } from "./everyday-interruption.js";
 import { collectRunEvents } from "./run-observations.js";
 import { gradeRemoteRestart, observeRemoteRestartBoundary, projectRemoteRestartEvents, projectRemoteRestartRun, waitForRemoteRestartBoundary, type RemoteRestartEvidence } from "./everyday-remote-restart.js";
-import type { ControllerOutageReceipt } from "./controller-outage.js";
+import { controllerOutageForExecution, type ControllerOutageReceipt } from "./controller-outage.js";
 import { setupAggregatorFixture } from "./aggregator-fixture.js";
 import { gradeProviderChoice, gradeProviderOutcome, requireProviderAccessCard } from "./connection-routing-evidence.js";
 import { setupConnectionReview } from "./connection-reviews.js";
@@ -170,9 +170,7 @@ export async function runEverydayFlow(input: Input) {
   let review: Awaited<ReturnType<typeof setupConnectionReview>> | undefined;
   let project = fixtures.project;
   const caseId = execution.task.id;
-  const requireRemoteRestart = caseId === "recover-controller" && execution.environment.id === "daytona"
-    && execution.profile.generation === "native" && (execution.profile.provider === "codex"
-      || execution.profile.provider === "acpx");
+  const requireRemoteRestart = controllerOutageForExecution(execution, process.env) !== undefined;
   const providerChoice = caseId === "provider-decline" || caseId === "provider-second";
   const nativeProviderCase = caseId === "provider-native";
   let aggregatorFixture: Awaited<ReturnType<typeof setupAggregatorFixture>> | undefined;
