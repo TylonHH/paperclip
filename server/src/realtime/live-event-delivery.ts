@@ -130,13 +130,18 @@ export function createLiveEventDelivery(input: {
         socket.close(1008, "invalid run interests"); return;
       }
       negotiated = true;
+      // An unrelated view can replace its interests before a congested socket
+      // has accepted the gap notice. Only a revision following a sent notice
+      // can acknowledge catch-up; interest churn must not erase a silent gap.
+      const unnotifiedGap = needsResync && notifiedRevision !== revision;
       revision = Number(message.revision);
       interests = new Set(message.runIds);
-      needsResync = false;
+      needsResync = unnotifiedGap;
       if (control({ type: "live.subscribed", version: 1, revision })) {
+        resync();
         // Acknowledging new interests does not settle an old permission or
         // decoration read. Preserve its original deadline until drain finishes.
-        if (!draining && (socket.bufferedAmount ?? 0) < LIVE_DELIVERY_MAX_BYTES / 2 && congestionTimer) {
+        if (!needsResync && !draining && (socket.bufferedAmount ?? 0) < LIVE_DELIVERY_MAX_BYTES / 2 && congestionTimer) {
           clearTimeout(congestionTimer); congestionTimer = undefined;
         }
       } else overflow();

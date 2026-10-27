@@ -80,6 +80,27 @@ it("closes persistent congestion on its pending-work deadline without another so
   f.delivery.dispose();
   expect(vi.getTimerCount()).toBe(0);
 });
+it("keeps an unsent gap notice through unrelated interest changes after the socket drains", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  try {
+    f.subscribe(["run-1"]);
+    f.socket.bufferedAmount = LIVE_DELIVERY_MAX_BYTES;
+    f.delivery.enqueue(event());
+    expect(f.frames.some(frame => frame.type === "live.resync")).toBe(false);
+    await vi.advanceTimersByTimeAsync(4_000);
+    f.socket.bufferedAmount = 0;
+    // Another view opens after output was dropped. This is not a gap ACK.
+    f.subscribe(["run-1", "run-2"], 2);
+    expect(f.frames.at(-1)).toMatchObject({ type: "live.resync", revision: 2 });
+    expect(f.delivery.metrics().needsResync).toBe(true);
+    f.delivery.enqueue(event(2)); await settle();
+    expect(f.frames.some(frame => frame.type === "heartbeat.run.log")).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(f.socket.close).toHaveBeenCalledWith(1013, "persistent event backlog");
+  } finally { f.delivery.dispose(); }
+  expect(vi.getTimerCount()).toBe(0);
+});
 it.each([false, true])("preserves the overflow deadline across resubscription until delivery settles: %s", async settled => {
   vi.useFakeTimers();
   let release!: (event: LiveEvent) => void;
