@@ -1000,3 +1000,64 @@ The 051bc00a chat shard also failed an unchanged assertion: a provider-effect
 receipt was still processing instead of processed. Its isolated same-job retry
 passed, but the original job remains failed. This is recorded as an observed
 assertion-timing failure, not a worker-loss incident or a proven production fix.
+
+### Normal-operation cost correction (2026-10-27)
+
+Component comparison uses frozen full-stack source `24e4ea15fc9cb52ea3dec8d51ad551596de2c698`
+as before, and `51decdb9fb` as after. This compares two versions of the hot-upgrade
+stack, not the pre-feature server. The isolated Linux Node and PostgreSQL 17.11
+containers each have two CPUs and 1,536 MiB. Each phase has 300 controller sessions,
+10,000 historical tasks and a 65-second fixed offered workload. Checkpoints use
+the production encrypted writer, 4 KiB control results and natural 20-second lease
+renewals. The machine and Docker storage remain shared with other local work;
+this is not dedicated-host or production-capacity evidence.
+
+PR 1 makes external persistence the sole durable controller store. A local marker
+requires external restoration on restart. Standalone consumers retain the current
+staged file journal; the sandbox runner journal is unchanged. The initial
+file-only correction passed the steady profile but failed both burst latency gates
+at 602.5 and 687.8 ms. Those failed phases remain in the evidence.
+
+PR 2 gives checkpoint transactions a separate pool capped at two connections per
+database owner. Requests and lease renewal retain their own pools. No control
+barrier is released early. The real-Postgres backlog regression fails with the
+shared request pool, then passes with the bounded pool. It also restores the queued
+commands and rejects late writes after shutdown. Cost collection observes both
+application and checkpoint clients; a positive control still trips its write oracle.
+
+The final campaign reverses order for each repeat (steady ABBA, burst BAAB):
+
+| Profile | Offered requests | Before read p99 | After read p99 | Before/after checkpoint transactions per phase |
+| --- | --- | --- | --- | --- |
+| Steady | 500 reads/s, 100 writes/s | 107.6 / 106.1 ms | 107.8 / 107.2 ms | 3,899 / 3,899 |
+| Aligned burst | 100 reads/s, 20 writes/s | 689.4 / 584.1 ms | 103.3 / 105.4 ms | 3,600 / 3,600 |
+
+All four after phases pass the unchanged absolute and relative read-latency gates,
+99% offered-throughput gate, sub-second drain gate, and database CPU/memory gates.
+There are no SQL errors, rejected operations, ownership losses or missed database
+admission probes. Each steady phase changes 7,798 checkpoint records; each burst
+phase changes 7,200. After phases make zero hot-path local journal fsync calls;
+before phases make 7,200–7,798. This does not remove PostgreSQL WAL or fsync.
+
+Client-issued SQL is effectively unchanged: about 909.5 commands/s in steady
+phases and 411.9 commands/s in burst phases. Matched steady phases issue
+59,119 before and 59,120 after commands. The extra statement initializes the new
+client's PostgreSQL type cache. The final burst phase offers one extra normal
+request tick, so its raw total is reported separately rather than treated as
+checkpoint overhead. Existing hot-upgrade control and renewal writes remain.
+
+The measured tradeoff is up to two additional active connections per instance,
+not per agent. Steady PostgreSQL CPU rises from 10.15–10.31% to 11.85–12.05% of
+the two-CPU allocation; burst CPU stays near 4.4–4.8%. PostgreSQL cgroup peak memory
+is 526–532 MiB, including cache. Node RSS overlaps across variants and does not
+establish a memory saving. Controller delivery can wait behind its bounded pool;
+after burst control p99 is 379–475 ms. No production spend saving is inferred.
+
+Complete phase JSON, SQL shapes, source/image hashes, sampler output and both
+failed and passing attempts are retained under
+`/tmp/paperclip-controller-persistence-20261027/`. The real-runner 8/512-chunk
+checks still observe zero streaming and idle checkpoint SQL. These component
+measurements do not qualify a new hosted artifact, a different harness, actual
+A→B/B→A replacement, or the ordinary Cloud rollout policy. Those gates remain
+open and PR 3 remains draft. Integrated-stack checks and review status belong to
+the exact current PR heads, not to the measured source by inference.
