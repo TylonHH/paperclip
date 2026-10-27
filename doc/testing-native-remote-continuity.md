@@ -211,6 +211,16 @@ scope and normal admission gates retain precedence. A completed tool receipt can
 restore a lost response. Safe reads recheck current authority. An uncertain
 external mutation is not executed again without outcome evidence.
 
+Title and feedback recovery use their existing receipt owners, including their
+normal input normalization and authorization. Semantic mutation recovery reads
+under the same receipt lock as ordinary retries. Creation and reassignment
+replay only their existing idempotent wake-up suffix after finding a matching
+receipt; they cannot enter the mutation or cancellation path when a receipt is
+absent. Monitor recovery uses the parsed input and preserves the saved deadline.
+`tool-receipt-recovery.integration.test.ts` exercises lost responses, failed
+post-commit dispatch, normalized keys, missing receipts, later title edits and
+Stop, checking the independent business rows and audit effects before and after.
+
 Instruction update/restore tools recover their existing `instruction:<callId>`
 receipts through the instruction mutation owner. Recovery rechecks the current
 target permission, active run and exact arguments under the normal receipt lock;
